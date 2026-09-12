@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Northstar · Share your feedback</title><link rel="stylesheet" href="./styles.css"></head>
+<body>
+  <header class="header"><a class="brand" href="./"><span class="mark">✳</span> northstar<span class="brand-divider"></span><span class="brand-sub">CUSTOMER FEEDBACK</span></a><span class="header-note">We’re here to listen.</span></header>
+  <main>
+    <div id="preview-banner" class="banner" hidden>Your contact export has been updated. <a href="/">Back to Northstar →</a></div>
+    <section class="intro"><div><p class="eyebrow">LET’S MAKE NORTHSTAR BETTER</p><h1>Your experience matters.</h1><p class="lede">Simple tools for keeping your contacts organized. Tell us what you love, what’s missing, or what isn’t working.</p></div></section>
+    <div class="layout">
+      <section class="feedback-card" id="submission-panel"><div class="section-title"><h2>How can we do better?</h2><span>WE'RE LISTENING</span></div><p class="muted">A bug, an idea, or something that could be easier.</p>
+        <form id="feedback-form"><label for="reviewer">Your name</label><input id="reviewer" maxlength="80" required value="Maya" autocomplete="given-name"><label for="feedback-text">Your feedback</label><textarea id="feedback-text" required maxlength="11000" rows="5" placeholder="What happened? What did you expect instead?"></textarea><button class="submit" id="submit-feedback" type="submit">Send feedback <span>↗</span></button><p id="submit-state" class="form-status" role="status"></p></form>
+        <div class="demo-helper" hidden><span class="eyebrow">TRY THE DEMO</span><button class="text-button" id="use-example" type="button">Use an example: CSV export fails ↗</button><p></p></div>
+        <details class="bug-demo" id="bug-demo"><summary>Export your contacts</summary><p>Download your contact list as a CSV file.</p><button class="secondary" id="export" type="button">Export contacts ↓</button><div id="export-notice" role="status" hidden></div></details>
+      </section>
+      <section class="activity" aria-label="Feedback progress" hidden><div class="section-title"><h2 id="activity-title">From feedback to fix</h2><span id="mode" class="mode">Connecting</span></div><p class="muted" id="connection" role="status">Checking the engineering connection…</p><div id="tasks"></div><div id="operator-link"></div></section>
+      <aside class="company-note" id="company-note"><span class="note-icon">✳</span><h2>Made for the way you work.</h2><p>Northstar keeps your contacts in one place, so you can focus on the people behind them.</p><div class="note-rule"></div><h3>Every detail helps.</h3><p>If something went wrong, let us know what you were trying to do and what happened. Your feedback helps us make the everyday things better.</p><span class="signature">The Northstar team</span></aside>
+    </div>
+    <details class="review-inbox" hidden><summary>Behind the scenes <span>Feedback inbox & filtering</span></summary><div class="inbox-heading"><p>Original reports stay visible. Related CSV reports are grouped by this demo's issue category. Promotional spam is held using simple rules; AI authorship is not judged.</p><button class="secondary" id="seed-samples">Add labeled sample feedback</button></div><div id="reviews"></div></details>
+    <footer><span>© 2026 Northstar</span><span>Thoughtful tools. Better days.</span></footer>
+  </main><script type="module" src="./app.mjs"></script>
+</body></html>

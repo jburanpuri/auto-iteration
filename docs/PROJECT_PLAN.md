@@ -1,5 +1,7 @@
 # Auto Iteration: first working product
 
+Current implementation: Discord team channels, live Codex investigation/implementation, optional OpenRouter conversation, a small CRM with feedback escalation, and a read-only local logs MCP. See [the live demo guide](DISCORD_DEMO.md). The original milestones below retain the broader product roadmap.
+
 ## Product promise
 
 A business connects a feedback source, its engineering conversation, and an approved repository. Auto Iteration turns a specific customer problem into a code-backed proposal. Engineers discuss and revise it, an authorized engineer approves an exact version, and the system prepares a tested change for code review.

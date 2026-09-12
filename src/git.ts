@@ -60,6 +60,7 @@ export async function collectChanges(repo: Repository, task: Task, workspace: st
     ...plan.acceptanceCriteria.map(item => `- ${item}`), '',
     '## Validation', `Test command: ${JSON.stringify(repo.testCommand)}`, 'Exit code: 0',
     `Full output: ${testOutputPath}`, '', '## Review',
+    'Repository tests are recorded above. Browser/UI behavior needs separate preview verification.',
     `Workspace: ${workspace}`, `Branch: ${branch}`, `Patch: ${patchPath}`, '',
     'This is a local review bundle. No remote PR has been created, merged, or deployed.',
   ].join('\n'));

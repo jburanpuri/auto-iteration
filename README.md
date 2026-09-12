@@ -2,9 +2,37 @@
 
 Turn customer feedback into an engineering discussion, an approved solution, and a tested code change for review.
 
-**Current milestone:** a working local workflow plus optional Slack, Brave, Inngest, and Codex adapters. The default demo is explicitly scripted. It makes real Git checkouts, edits code, and runs regression tests; it does not call an AI model, send messages, or create a remote PR.
+**Current demo:** one Northstar feedback page → one submission → Codex investigation → Discord proposal with **Approve** and **Request changes** buttons → tested local fix and preview. No revenue dashboard or unrelated company list.
 
-Read [the project plan](docs/PROJECT_PLAN.md) for product scope, architecture, build order, and implementation risks. Read [the integration guide](docs/INTEGRATIONS.md) when connecting services.
+## Demo it in two minutes
+
+```sh
+npm ci
+npm run codex:status
+npm run demo:live
+```
+
+Open `http://127.0.0.1:4318/`. Enter a name, write “Exporting an empty contact list shows an error instead of downloading a CSV,” then **Send feedback**. One submission starts the investigation. The public page only shows Northstar branding and a thank-you message; engineer details stay in Discord and the separate console. The optional **Export your contacts** section reproduces the real empty-export crash and records its error.
+
+In Discord, the bot posts who reported the problem, what Codex found in the code, the proposed fix, and test criteria. Click **Request changes**, enter “Keep the column headers for empty exports,” and submit. Codex prepares a new version. Click **Approve v2** to implement exactly that plan, run tests, and expose the fixed preview. Only configured Discord approvers may approve.
+
+Connect Discord with [the setup guide](docs/DISCORD_DEMO.md). The startup log confirms the connected bot. OpenRouter is optional for engineering conversation; Codex handles investigation and implementation. The server does not invent successful delivery if Discord is disconnected.
+
+For a credential-free rehearsal:
+
+```sh
+DISCORD_BOT_TOKEN='' DEMO_EXECUTOR=demo CONVERSATION_PROVIDER=codex npm run demo:live
+```
+
+The engineer console explicitly says **Scripted rehearsal**. The public company page contains no agent or workflow explanation. Use `http://127.0.0.1:4319/` as the local engineer fallback to discuss, revise, and approve. These controls trust the laptop operator and live on a separate loopback origin; they are not production authentication. Generated previews are never served from that origin.
+
+Optional **Behind the scenes** samples show two related export reports, a feature request held for product review, and promotional spam retained for inspection. Samples alone never launch an investigation. The demo uses explicit CSV category grouping and simple spam rules, not semantic clustering or AI-authorship detection. In live Codex mode, other feedback also starts an investigation; the scripted rehearsal only implements the CSV fixture and retains other feedback in the backlog.
+
+The demo stores its state and isolated repository in `.local/northstar-company-demo`. For a fresh presentation, set `DEMO_DATA_DIR` to a new directory; existing runs are preserved. Set `FEEDBACK_PORT` and `DEMO_OPERATOR_PORT` if the default ports are occupied.
+
+**Output is currently a local patch, test log, review summary, and fixed preview. Remote PR publishing remains unimplemented.**
+
+Read [the project plan](docs/PROJECT_PLAN.md) for architecture and [the integration guide](docs/INTEGRATIONS.md) for optional services.
 
 ## Run the working demo
 
@@ -82,16 +110,18 @@ If the worker dies mid-job, run `npm run cli -- recover`. On this single host, r
 
 | Concern | Choice | Current implementation |
 | --- | --- | --- |
-| Backend | Node.js + TypeScript | One application, no web dashboard |
-| Feedback intake | Local HTTP API, JSON file, or Slack mention | Stable source ID, validation, duplicate delivery handling |
-| Engineering discussion | Slack Bolt + Socket Mode | One configured channel, one thread per task; CLI alternative |
+| Backend | Node.js + TypeScript | One application and a company feedback page |
+| Feedback intake | Product feedback form, local HTTP API, JSON file, or chat mention | Stable source ID, validation, duplicate delivery handling |
+| Engineering discussion | Discord Gateway; optional Slack | Configured team channels, replies per task, human approver IDs |
 | Workflow | Persisted jobs + optional Inngest | Transactional job enqueue, atomic claims, restart recovery |
-| Proposals and coding | Provider interface + Codex SDK | Scripted fixture by default; optional live Codex adapter |
+| Proposals and coding | Provider interface + Codex SDK | Real Codex for demo:live; scripted offline demo retained |
 | Web specialist | Brave Search API | Explicit public query → source snippets → discussion → revised plan |
 | Storage | SQLite | Task state, plan history, approvals, job queue, audit and delivery receipts |
-| Output | Local Git branch + patch + review summary | Remote draft PR publishing is the next milestone |
+| Conversation | OpenRouter or Codex | Replies and advisory briefs; no approval or execution tools |
+| Observability | Local read-only MCP | Task-scoped browser error/timing logs |
+| Output | Local Git branch + patch + review summary + preview | Remote draft PR publishing is the next milestone |
 
-The conversational interface currently records engineers' discussion and supports explicit `revise`, `approve`, and `decline` commands. Open-ended conversational AI answers and approval buttons are planned; they are not implemented yet.
+Discord records engineers' discussion, answers through OpenRouter or Codex, and supports explicit `revise`, `approve`, and `decline` commands. Discord proposals include versioned approval buttons and a request-changes modal. Slack retains the earlier command-only adapter.
 
 ## Verify
 
@@ -102,7 +132,7 @@ npm test
 
 Tests cover the actual Git/test workflow, duplicate deliveries, conflicting source IDs, organization boundaries, plan versions, approval permissions and expiry, new discussion, base changes, failed tests, concurrent workers, restart recovery, Slack command parsing, and Brave response/error handling.
 
-External account integrations require credentials and separate live validation. The SQLite warning on Node 22 is expected because that runtime still labels `node:sqlite` experimental.
+Discord/OpenRouter delivery requires credentials and separate live validation. See docs/VERIFICATION.md for the checks actually performed. The SQLite warning on Node 22 is expected because that runtime still labels `node:sqlite` experimental.
 
 ## Code map
 

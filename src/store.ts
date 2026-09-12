@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DomainError, type Audit, type Job, type Task } from './domain.js';
+import { DomainError, type Audit, type Job, type Task, type FeedbackInput, type Issue, type ProductLog, type DemoReview } from './domain.js';
 
 /** Single-host MVP storage. Mutations, jobs, and audit records commit together. */
 export class Store {
@@ -21,11 +21,70 @@ export class Store {
       CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS discord_messages (
+        scope TEXT NOT NULL, message_id TEXT NOT NULL, task_id TEXT NOT NULL,
+        PRIMARY KEY(scope, message_id)
+      );
+      CREATE TABLE IF NOT EXISTS complaints (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, repository_id TEXT NOT NULL,
+        external_id TEXT NOT NULL, issue TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL, task_id TEXT,
+        UNIQUE(organization_id, repository_id, external_id)
+      );
+      CREATE TABLE IF NOT EXISTS product_logs (
+        id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, repository_id TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS demo_reviews (
+        organization_id TEXT NOT NULL, repository_id TEXT NOT NULL, external_id TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(organization_id, repository_id, external_id)
+      );
     `);
   }
   close() { this.db.close(); }
+  reviews(org: string, repo: string): DemoReview[] {
+    return this.db.prepare('SELECT data FROM demo_reviews WHERE organization_id=? AND repository_id=? ORDER BY rowid DESC')
+      .all(org, repo).map(row => JSON.parse(String(row.data)) as DemoReview);
+  }
+  demoReview(org: string, repo: string, review: DemoReview, makeTask: (reports: DemoReview[]) => Task) {
+    return this.tx(() => {
+      const reviews = this.reviews(org, repo);
+      const existing = reviews.find(item => item.feedback.externalId === review.feedback.externalId);
+      if (existing) {
+        if (JSON.stringify(existing.feedback) !== JSON.stringify(review.feedback) || existing.issue !== review.issue || existing.sample !== review.sample) {
+          throw new DomainError('This source ID already exists with different content.');
+        }
+        return { review: existing, duplicate: true };
+      }
+      if (review.disposition === 'investigating') {
+        const linked = reviews.find(item => review.issue === 'csv_export' && item.issue === review.issue && item.taskId &&
+          ['received', 'investigating', 'discussing', 'revising'].includes(this.get(item.taskId, org).status));
+        if (linked) {
+          review.taskId = linked.taskId; review.disposition = 'grouped';
+          review.reason = 'Grouped with the open CSV-export issue. Original report retained.';
+        } else {
+          const samples = reviews.filter(item => item.issue === review.issue && item.disposition === 'sample');
+          const task = makeTask([...samples, review]);
+          this.createInside(task); review.taskId = task.id;
+          for (const sample of samples) {
+            sample.taskId = task.id; sample.disposition = 'grouped';
+            sample.reason = 'Sample evidence attached to the live report.';
+            this.db.prepare('UPDATE demo_reviews SET data=? WHERE organization_id=? AND repository_id=? AND external_id=?')
+              .run(JSON.stringify(sample), org, repo, sample.feedback.externalId);
+          }
+        }
+      }
+      this.db.prepare('INSERT INTO demo_reviews VALUES (?, ?, ?, ?)').run(org, repo, review.feedback.externalId, JSON.stringify(review));
+      return { review, duplicate: false };
+    });
+  }
   hasReceipt(id: string): boolean { return !!this.db.prepare('SELECT id FROM receipts WHERE id=?').get(id); }
   recordReceipt(id: string) { this.db.prepare('INSERT OR IGNORE INTO receipts VALUES (?)').run(id); }
+  linkDiscordMessage(scope: string, messageId: string, taskId: string) {
+    this.db.prepare('INSERT OR IGNORE INTO discord_messages VALUES (?, ?, ?)').run(scope, messageId, taskId);
+  }
+  discordTask(scope: string, messageId: string, organizationId: string): Task | undefined {
+    const row = this.db.prepare('SELECT task_id FROM discord_messages WHERE scope=? AND message_id=?').get(scope, messageId);
+    return row ? this.get(String(row.task_id), organizationId) : undefined;
+  }
   private tx<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
@@ -41,7 +100,9 @@ export class Store {
       .all(organizationId).map(row => JSON.parse(String(row.data)) as Task);
   }
   create(task: Task): { task: Task; duplicate: boolean } {
-    return this.tx(() => {
+    return this.tx(() => this.createInside(task));
+  }
+  private createInside(task: Task): { task: Task; duplicate: boolean } {
       const row = this.db.prepare('SELECT data FROM tasks WHERE organization_id=? AND source=? AND external_id=?')
         .get(task.organizationId, task.feedback.source, task.feedback.externalId);
       if (row) {
@@ -56,6 +117,46 @@ export class Store {
       this.addAudit(task.id, { type: 'feedback.received', actor: 'intake', at: task.createdAt });
       this.addJob(task.id, 'investigate');
       return { task, duplicate: false };
+  }
+  recordLog(org: string, repositoryId: string, log: ProductLog) {
+    this.db.prepare('INSERT OR IGNORE INTO product_logs VALUES (?, ?, ?, ?, ?)').run(log.id, org, repositoryId, log.at, JSON.stringify(log));
+  }
+  logs(org: string, repositoryId: string, since: string): ProductLog[] {
+    return this.db.prepare('SELECT data FROM product_logs WHERE organization_id=? AND repository_id=? AND at>=? ORDER BY at DESC LIMIT 50')
+      .all(org, repositoryId, since).map(row => JSON.parse(String(row.data)) as ProductLog);
+  }
+  complaintCounts(org: string, repositoryId: string, since: string) {
+    return this.db.prepare('SELECT issue, COUNT(*) AS reports FROM complaints WHERE organization_id=? AND repository_id=? AND at>=? AND task_id IS NULL GROUP BY issue')
+      .all(org, repositoryId, since).map(row => ({ issue: String(row.issue), reports: Number(row.reports) }));
+  }
+  escalate(org: string, repositoryId: string, feedback: FeedbackInput, issue: Issue, at: string,
+    makeTask: (feedback: FeedbackInput, signal: NonNullable<Task['signal']>) => Task) {
+    return this.tx(() => {
+      const existing = this.db.prepare('SELECT * FROM complaints WHERE organization_id=? AND repository_id=? AND external_id=?')
+        .get(org, repositoryId, feedback.externalId);
+      if (existing && (String(existing.data) !== JSON.stringify(feedback) || existing.issue !== issue)) {
+        throw new DomainError('This source ID already exists with different content.');
+      }
+      if (existing?.task_id) {
+        const task = this.get(String(existing.task_id), org);
+        return { task, duplicate: true, reportCount: task.signal?.reportCount ?? 1 };
+      }
+      if (!existing) this.db.prepare('INSERT INTO complaints VALUES (?, ?, ?, ?, ?, ?, ?, NULL)')
+        .run(randomUUID(), org, repositoryId, feedback.externalId, issue, at, JSON.stringify(feedback));
+      const since = new Date(Date.parse(at) - 30 * 60_000).toISOString();
+      // Demo issue keys are explicit product categories, not a claim of semantic clustering.
+      const rows = this.db.prepare(`SELECT id, data FROM complaints WHERE organization_id=? AND repository_id=? AND issue=?
+        AND at>=? AND task_id IS NULL ORDER BY at, rowid`).all(org, repositoryId, issue, since);
+      const threshold = issue === 'other' ? 1 : 3;
+      if (rows.length < threshold) return { task: undefined, duplicate: !!existing, reportCount: rows.length };
+      const batch = rows.slice(0, threshold);
+      const reports = batch.map(row => JSON.parse(String(row.data)) as FeedbackInput);
+      const signal = { issue, reportCount: batch.length, windowMinutes: 30, reportIds: batch.map(row => String(row.id)) };
+      const task = makeTask({ source: 'complaint-surge', externalId: String(batch[0]!.id), title: reports[0]!.title,
+        text: `${batch.length} customer report(s) in 30 minutes about ${issue}.\n\n${reports.map((report, i) => `Report ${i + 1}: ${report.text.slice(0, 3000)}`).join('\n\n')}` }, signal);
+      this.createInside(task);
+      for (const row of batch) this.db.prepare('UPDATE complaints SET task_id=? WHERE id=?').run(task.id, String(row.id));
+      return { task, duplicate: !!existing, reportCount: batch.length };
     });
   }
   mutate(id: string, org: string, audit: Audit, fn: (task: Task) => void, job?: Job['kind'], receiptId?: string): Task {

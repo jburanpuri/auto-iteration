@@ -3,8 +3,10 @@ export function formatTask(task: Task): string {
   const plan = task.plans.at(-1);
   return [
     `${task.feedback.title} [${task.status}]`, `Task: ${task.id}`,
-    ...(plan ? [`Plan v${plan.version} (${plan.disposition}): ${plan.summary}`, '', 'Acceptance criteria:',
-      ...plan.acceptanceCriteria.map(item => `- ${item}`), '', 'Evidence:', ...plan.evidence.map(item => `- ${item}`),
+    ...(plan ? [`Proposed solution · v${plan.version}: ${plan.summary}`,
+      ...(plan.team ? [`Suggested team: ${plan.team}. ${plan.routingReason}`] : []), '', 'Acceptance criteria:',
+      ...plan.acceptanceCriteria.map(item => `- ${item}`), '', 'Code evidence:', ...plan.evidence.map(item => `- ${item}`),
+      '', 'Implementation plan:', ...plan.steps.map(item => `- ${item}`),
       `Expires: ${plan.expiresAt}`,
       ...(plan.commentCount < task.comments.length ? ['New discussion needs to be incorporated. Request revise before approving.'] : [])] : []),
     ...(task.error ? [`Failure: ${task.error}`] : []),

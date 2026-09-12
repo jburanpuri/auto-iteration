@@ -1,5 +1,7 @@
 # Connecting the MVP
 
+For the current Discord + OpenRouter + Codex product demo, start with [DISCORD_DEMO.md](DISCORD_DEMO.md).
+
 The keyless local demo works without these steps. Adapters are implemented and typechecked; their live account connections have not been validated in this workspace.
 
 ## Configuration

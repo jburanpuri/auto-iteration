@@ -8,8 +8,23 @@ export const inputSchema = z.object({
   text: z.string().trim().min(1).max(12_000),
 }).strict();
 export type FeedbackInput = z.infer<typeof inputSchema>;
+export type DemoReview = {
+  id: string; feedback: FeedbackInput; issue: string; at: string; sample: boolean;
+  disposition: 'sample' | 'investigating' | 'grouped' | 'backlog' | 'quarantined';
+  reason: string; taskId?: string;
+};
+export const issueSchema = z.enum(['csv_export', 'filter_reset', 'search_latency', 'other']);
+export type Issue = z.infer<typeof issueSchema>;
+export const logSchema = z.object({
+  id: z.string().uuid(), issue: issueSchema, event: z.enum(['export_failed', 'export_succeeded', 'search_completed']),
+  message: z.string().max(1000), durationMs: z.number().nonnegative().max(60000).optional(),
+  rowCount: z.number().int().nonnegative().max(100000).optional(), stack: z.string().max(3000).optional(),
+}).strict();
+export type ProductLog = z.infer<typeof logSchema> & { at: string };
 export const proposalSchema = z.object({
   disposition: z.enum(['code_change', 'needs_clarification', 'non_code']),
+  team: z.enum(['engineering', 'ui_ux', 'performance']),
+  routingReason: z.string().min(1).max(1000),
   summary: z.string().min(1).max(4000),
   evidence: z.array(z.string().max(2000)).min(1).max(20),
   steps: z.array(z.string().max(2000)).min(1).max(20),
@@ -33,6 +48,9 @@ export type Task = {
   createdAt: string; updatedAt: string; comments: Comment[]; plans: Plan[];
   approval?: { actorId: string; version: number; at: string };
   result?: ChangeResult; error?: string; slackThread?: string;
+  discord?: { guildId: string; channelId: string; messageId: string };
+  signal?: { issue: Issue; reportCount: number; windowMinutes: number; reportIds: string[] };
+  agentNotes?: { reply: string; codexBrief: string; at: string; commentCount: number }[];
 };
 export type Job = {
   id: string; taskId: string; kind: 'investigate' | 'implement';
