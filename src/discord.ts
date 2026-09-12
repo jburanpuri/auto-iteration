@@ -64,7 +64,7 @@ export async function startDiscord(engine: Engine, runJobs = true) {
         throw new Error('Grant the bot View Channel, Send Messages, and Read Message History in the configured channel.');
       }
       const controller = new DiscordController(engine, { ...settings, channelId, botId: client.user!.id,
-        consoleUrl: `http://127.0.0.1:${process.env.DEMO_OPERATOR_PORT || Number(process.env.FEEDBACK_PORT || 4318) + 1}/`,
+        consoleUrl: process.env.PUBLIC_DEMO_URL || `http://127.0.0.1:${process.env.DEMO_OPERATOR_PORT || Number(process.env.FEEDBACK_PORT || 4318) + 1}/engineering/`,
         route: task => routeChannel(task, settings.channels) }, {
         async send(text, replyTo, controls) {
           const ids: string[] = [];

@@ -134,7 +134,7 @@ export class DiscordController {
       const destination = this.config.route?.(task) ?? this.config.channelId;
       if (task.discord ? !this.attached(task) : destination !== this.config.channelId) continue;
       // Keep the existing receipt key so restarting does not replay old proposals.
-      const signature = `discord-state:${this.scope}:${task.id}:${task.status}:${task.plans.at(-1)?.version ?? 0}:${task.error ?? ''}`;
+      const signature = `discord-state:${this.scope}:${task.id}:${task.status}:${task.plans.at(-1)?.version ?? 0}:${task.error ?? ''}${task.publication ? `:${task.publication.status}` : ''}`;
       if (this.engine.store.hasReceipt(signature)) continue;
       const prefix = /SCRIPTED/.test(this.engine.provider.label) ? '[Scripted rehearsal]\n' : '';
       const ids = await this.post(`${prefix}${formatDiscordTask(task, this.config.consoleUrl)}`, task, undefined, true);

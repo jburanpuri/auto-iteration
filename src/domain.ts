@@ -13,7 +13,7 @@ export const inputSchema = z.object({
 }).strict();
 export type FeedbackInput = z.infer<typeof inputSchema>;
 export type DemoReview = {
-  id: string; feedback: FeedbackInput; issue: string; at: string; sample: boolean;
+  id: string; feedback: FeedbackInput; issue: string; at: string; sample: boolean; groupKey?: string;
   disposition: 'sample' | 'investigating' | 'grouped' | 'backlog' | 'quarantined';
   reason: string; taskId?: string;
 };
@@ -26,6 +26,12 @@ export const logSchema = z.object({
 }).strict();
 export type ProductLog = z.infer<typeof logSchema> & { at: string };
 export const proposalSchema = z.object({
+  confidence: z.object({
+    legitimacy: z.enum(['low', 'medium', 'high', 'sample']),
+    legitimacyReason: z.string().min(1).max(600),
+    issue: z.enum(['low', 'medium', 'high']),
+    issueReason: z.string().min(1).max(600),
+  }).strict().optional(),
   classification: z.object({
     kind: z.enum(['bug', 'feature_request', 'usability', 'performance', 'question', 'spam', 'other']),
     issue: z.string().min(1).max(200),
@@ -61,6 +67,9 @@ export type Task = {
   discord?: { guildId: string; channelId: string; messageId: string };
   signal?: { issue: Issue; reportCount: number; windowMinutes: number; reportIds: string[] };
   agentNotes?: { reply: string; codexBrief: string; at: string; commentCount: number }[];
+  batchId?: string;
+  implementationRun?: {threadId:string|null;model:string;reasoning:string};
+  publication?: { status: 'published' | 'failed'; url?: string; error?: string; at: string };
 };
 export type Job = {
   id: string; taskId: string; kind: 'investigate' | 'implement';

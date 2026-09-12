@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { z } from 'zod';
 import { resolve } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -32,6 +33,6 @@ export function runtime() {
     ? new OpenRouterConversation(process.env.OPENROUTER_API_KEY || '', process.env.OPENROUTER_MODEL || '') : undefined; }
   catch (error) { store.close(); throw error; }
   const engine = new Engine(store, process.env.ORGANIZATION_ID || 'demo-company', repo,
-    mode === 'demo' ? new DemoProvider() : new CodexProvider(process.env.CODEX_MODEL), root, undefined, conversation);
+    mode === 'demo' ? new DemoProvider() : new CodexProvider(process.env.CODEX_MODEL || 'gpt-6-astra', z.enum(['minimal','low','medium','high','xhigh','max','ultra','persistent']).parse(process.env.CODEX_REASONING_EFFORT || 'low')), root, undefined, conversation);
   return { store, engine, root };
 }

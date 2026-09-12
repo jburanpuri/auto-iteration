@@ -7,7 +7,7 @@ import { Engine } from './engine.js';
 import { DomainError, TaskNotFoundError, inputSchema, issueSchema, logSchema, type Task } from './domain.js';
 import { CodexProvider } from './providers.js';
 import { serveProduct } from './product-preview.js';
-import { feedbackBatchScenarios } from './demo-feedback.js';
+import { feedbackBatchScenarios, datedFeedbackScenarios } from './demo-feedback.js';
 
 const bodySchema = inputSchema.omit({ source: true }).strict();
 const maxBytes = 64 * 1024;
@@ -63,7 +63,7 @@ function readJson(req: IncomingMessage, timeoutMs: number): Promise<unknown> {
 
 /** Operator controls are opt-in and hosted on a separate loopback origin by demo-live. */
 export function feedbackServer(engine: Engine, token: string, options: { productUI?: boolean; discordConnected?: () => boolean;
-  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string; bodyTimeoutMs?: number } = {}) {
+  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string; bodyTimeoutMs?: number; collectOnly?: boolean } = {}) {
   if (token.length < 24) throw new Error('The feedback API token must contain at least 24 characters.');
   const bodyTimeoutMs = options.bodyTimeoutMs ?? 10_000;
   if (!Number.isSafeInteger(bodyTimeoutMs) || bodyTimeoutMs <= 0) throw new Error('Body timeout must be a positive integer.');
@@ -72,7 +72,7 @@ export function feedbackServer(engine: Engine, token: string, options: { product
   const conversations = new Set<string>();
   const cookieName = options.operatorUI ? 'northstar_operator' : 'orbit_demo';
   const taskView = (task: Task) => ({ taskId: task.id, product: 'Demo CRM', mode, status: task.status,
-    createdAt: task.createdAt, feedback: task.feedback, plan: task.plans.at(-1) ?? null, comments: task.comments,
+    publication: task.publication, batchId: task.batchId, createdAt: task.createdAt, feedback: task.feedback, plan: task.plans.at(-1) ?? null, comments: task.comments,
     discord: task.discord ?? null, signal: task.signal ?? null, approval: task.approval ?? null, result: task.result ?? null, error: task.error ?? null,
     agentNotes: task.agentNotes ?? [], audit: engine.store.audit(task.id, engine.organizationId), conversationPending: conversations.has(task.id) });
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -84,11 +84,14 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         if (options.operatorUI && req.headers.host?.split(':')[1] !== String(req.socket.localPort)) throw new HttpError(403, 'Invalid operator origin.');
         if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Cross-origin requests are not accepted.');
         if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403, 'Cross-site requests are not accepted.');
-        if (req.method === 'GET' && (path === '/' || /^\/preview\/[a-f0-9-]{36}\/$/.test(path))) {
+        if (req.method === 'GET' && (path === '/' || (options.operatorUI && path === '/engineering/') || /^\/preview\/[a-f0-9-]{36}\/$/.test(path))) {
           res.setHeader('Set-Cookie', `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`);
         }
         if (req.method === 'GET' && !path.startsWith('/api/') && path !== '/health') {
-          if (await serveProduct(engine, path, res, options.operatorUI ? fileURLToPath(new URL('../examples/mini-crm/', import.meta.url)) : undefined)) return;
+          const engineeringPage = options.operatorUI && path.startsWith('/engineering/');
+          const assetPath = engineeringPage ? path.slice('/engineering'.length) : path;
+          const trustedRoot = options.operatorUI ? fileURLToPath(new URL(engineeringPage ? '../examples/mini-crm/' : '../examples/reviews/', import.meta.url)) : undefined;
+          if (await serveProduct(engine, assetPath, res, trustedRoot)) return;
           throw new HttpError(404, 'Product file or ready preview not found.');
         }
       }
@@ -103,10 +106,20 @@ export function feedbackServer(engine: Engine, token: string, options: { product
       }
       if (req.method === 'GET' && path === '/api/tasks' && options.productUI) {
         json(res, 200, { mode, discord: options.discordConnected?.() ?? false, operator: options.operatorUI ?? false,
-          operatorUrl: options.operatorUrl, productUrl: options.productUrl, demoScenarios: options.operatorUI ? feedbackBatchScenarios : undefined, guidedDemo: options.guidedDemo ?? false,
-          reviews: engine.store.reviews(engine.organizationId, engine.repo.id),
+          operatorUrl: options.operatorUrl, productUrl: options.productUrl, demoScenarios: options.operatorUI ? datedFeedbackScenarios() : undefined, guidedDemo: options.guidedDemo ?? false,
+          batches: engine.store.batches(engine.organizationId, engine.repo.id), reviews: engine.store.reviews(engine.organizationId, engine.repo.id),
           complaints: engine.store.complaintCounts(engine.organizationId, engine.repo.id, new Date(Date.now() - 30 * 60_000).toISOString()),
           tasks: engine.store.list(engine.organizationId).filter(task => task.repositoryId === engine.repo.id).map(taskView) }); return;
+      }
+      if (req.method === 'POST' && path === '/api/workflow/start' && options.operatorUI) {
+        if (req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Same-origin request required.');
+        const { batchId } = z.object({ batchId: z.string().uuid() }).strict().parse(await readJson(req, bodyTimeoutMs));
+        for (const [group, scenario] of feedbackBatchScenarios.entries()) for (const [index, review] of scenario.reviews.entries()) {
+          engine.collect({ source: 'demo-samples', externalId: `sample-${group}-${index}`, title: scenario.title,
+            text: `Reported by ${review.name} (sample participant).\n${review.text}`, category: scenario.category }, true);
+        }
+        const batch = engine.store.queueBatch(engine.organizationId, engine.repo.id, batchId);
+        json(res, 202, batch); return;
       }
       const action = /^\/api\/operator\/([a-f0-9-]{36})\/(comment|revise|approve|decline)$/.exec(path);
       if (req.method === 'POST' && path === '/api/operator/demo-batch' && options.operatorUI) {
@@ -114,15 +127,15 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         const { batchId } = z.object({ batchId: z.string().uuid() }).strict().parse(await readJson(req, bodyTimeoutMs));
         const scenarios = feedbackBatchScenarios;
         const taskIds = new Set<string>();
-        for (const [index, scenario] of scenarios.entries()) for (const [person, name] of scenario.names.entries()) {
+        for (const [index, scenario] of scenarios.entries()) for (const [person, review] of scenario.reviews.entries()) {
           const result = engine.demoReview({ source: `demo-batch:${batchId}`, externalId: `${batchId}:${index}:${person}`,
             category: scenario.category, title: `[Demo feedback] ${scenario.title}`,
-            text: `Reported by ${name} (sample participant).\n${scenario.text}` }, 'other', true, true);
+            text: `Reported by ${review.name} (sample participant).\n${review.text}` }, 'other', true, true, `scenario-${index}`);
           if (result.review.taskId) taskIds.add(result.review.taskId);
         }
-        json(res, 202, { batchId, feedbackCount: 6, taskIds: [...taskIds], mode,
-          message: mode === 'codex' ? 'Six sample entries grouped into three investigations. Each proposal routes to its selected team.'
-            : 'Scripted rehearsal: six entries queued. Only the CSV fixture can be implemented in this mode; use live Codex for all three scenarios.' }); return;
+        json(res, 202, { batchId, feedbackCount: scenarios.reduce((count, scenario) => count + scenario.reviews.length, 0), taskIds: [...taskIds], mode,
+          message: mode === 'codex' ? '120 sample reviews grouped into three investigations. Each proposal routes to its selected team.'
+            : 'Scripted rehearsal: 120 entries queued. Only the CSV fixture can be implemented in this mode; use live Codex for all three scenarios.' }); return;
       }
       if (req.method === 'POST' && action && options.operatorUI) {
         if (req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Operator actions require the engineer console origin.');
@@ -180,8 +193,9 @@ export function feedbackServer(engine: Engine, token: string, options: { product
           const parsed = bodySchema.extend({ issue: issueSchema.optional(), reviewer: z.string().trim().min(1).max(80).optional() }).strict().parse(body);
           const { issue, reviewer, ...feedback } = parsed;
           if (options.guidedDemo) {
-            const result = engine.demoReview({ ...feedback, title: `${reviewer ?? 'A user'}: ${feedback.title}`.slice(0, 200),
-              text: `Reported by ${reviewer ?? 'a user'} (self-reported name).\n${feedback.text}`.slice(0, 12000), source: 'demo-http' }, issue ?? 'other');
+            const intake = { ...feedback, title: `${reviewer ?? 'A user'}: ${feedback.title}`.slice(0, 200),
+              text: `Reported by ${reviewer ?? 'a user'} (self-reported name).\n${feedback.text}`.slice(0, 12000), source: 'demo-http' };
+            const result = options.collectOnly ? engine.collect(intake) : engine.demoReview(intake, issue ?? 'other');
             json(res, result.duplicate ? 200 : 202, { ...result, taskId: result.review.taskId ?? null,
               status: result.review.disposition, reason: result.review.reason }); return;
           }

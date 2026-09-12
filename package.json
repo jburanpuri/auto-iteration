@@ -20,12 +20,15 @@
     "demo:worker": "node --import=tsx src/demo-worker.ts",
     "discord": "node --import=tsx src/discord.ts",
     "codex:login": "node node_modules/@openai/codex/bin/codex.js login",
-    "codex:status": "node node_modules/@openai/codex/bin/codex.js login status"
+    "codex:status": "node node_modules/@openai/codex/bin/codex.js login status",
+    "demo:hosted": "HOSTED_DEMO=1 AUTO_PUBLISH=1 PUBLIC_DEMO_URL=https://northstar-auto-iteration.vercel.app FEEDBACK_PORT=4348 DEMO_OPERATOR_PORT=4349 node --import=tsx src/demo-live.ts",
+    "build:hosted": "node --import=tsx scripts/build-hosted.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
     "@openai/codex-sdk": "0.154.0",
     "@slack/bolt": "5.1.0",
+    "@vercel/blob": "^2.8.0",
     "discord.js": "14.27.0",
     "dotenv": "17.4.2",
     "inngest": "4.20.0",

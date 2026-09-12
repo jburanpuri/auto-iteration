@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { validateGrouping } from './review-batch.js';
 import { Store } from './store.js';
 import { DomainError, inputSchema, latestPlan, proposalSchema, requireState,
   type Actor, type Repository, type Task, type Job, type FeedbackInput, type Issue } from './domain.js';
@@ -7,6 +8,7 @@ import type { ConversationProvider } from './conversation.js';
 import { baseCommit, collectChanges, isolatedCheckout } from './git.js';
 
 export class Engine {
+  publish?: (task: Task) => Promise<string>;
   constructor(readonly store: Store, readonly organizationId: string, readonly repo: Repository,
     readonly provider: EngineeringProvider, readonly root: string,
     private clock: () => Date = () => new Date(), readonly conversation?: ConversationProvider) {}
@@ -18,20 +20,40 @@ export class Engine {
     const feedback = inputSchema.parse(input);
     return this.store.create(this.newTask(feedback));
   }
-  demoReview(input: unknown, issue: Issue = 'other', sample = false, launchSample = false) {
+  demoReview(input: unknown, issue: Issue = 'other', sample = false, launchSample = false, groupKey?: string) {
     const feedback = inputSchema.parse(input);
     // Only labeled fixtures use a scripted spam rule. Real reports are classified
     // by the agent, including reports ABOUT spam that merely quote those phrases.
     const spam = sample && /guaranteed.{0,20}(profit|income)|buy followers|click here.{0,40}crypto/i.test(`${feedback.title} ${feedback.text}`);
     const disposition = spam ? 'quarantined' : sample && !launchSample ? 'sample' : 'investigating';
     return this.store.demoReview(this.organizationId, this.repo.id, {
-      id: randomUUID(), feedback, issue, sample, at: this.at(), disposition,
+      id: randomUUID(), feedback, issue, sample, groupKey, at: this.at(), disposition,
       reason: spam ? 'Promotional spam phrase matched a demo rule; retained for review.' : sample && !launchSample
           ? 'Labeled sample report. Waiting for your submission to start investigation.'
           : 'The agent will classify the feedback, investigate the repository, and suggest the owning team. Implementation requires engineer approval.',
     }, reports => ({ ...this.newTask({ ...feedback, text: reports.map(report =>
       `${report.sample ? '[Sample]' : '[Submitted]'} ${report.feedback.title}\n${report.feedback.text}`).join('\n\n').slice(0, 12000) }),
       signal: { issue, reportCount: reports.length, windowMinutes: 30, reportIds: reports.map(report => report.id) } }));
+  }
+  collect(input: unknown, sample = false) {
+    const feedback = inputSchema.parse(input);
+    return this.store.collectReview(this.organizationId, this.repo.id, { id: randomUUID(), feedback, issue: 'other',
+      at: this.at(), sample, disposition: sample ? 'sample' : 'backlog', reason: 'Saved. Waiting for the next manual summary.' });
+  }
+  async summarizePending() {
+    for (const batch of this.store.batches(this.organizationId, this.repo.id).filter(b => b.status === 'pending' || b.status === 'summarizing')) {
+      try {
+        batch.status = 'summarizing'; this.store.saveBatch(this.organizationId, this.repo.id, batch);
+        const reviews = this.store.reviews(this.organizationId, this.repo.id).filter(r => batch.reportIds.includes(r.id));
+        if (!this.provider.summarize) throw new DomainError('Batch summarization requires live Codex.');
+        const grouping = reviews.length ? validateGrouping(await this.provider.summarize(reviews), reviews) : { groups: [] };
+        this.store.finishBatch(this.organizationId, this.repo.id, batch, grouping, (group, reports) => ({
+          ...this.newTask({ externalId: `${batch.id}:${reports[0]!.id}`, source: `review-batch:${batch.id}`, category: group.category,
+            title: group.title, text: `${group.summary}\n\nOriginal reports:\n${reports.map(r => `${r.sample ? '[Sample]' : '[Submitted]'} ${r.feedback.text}`).join('\n\n')}`.slice(0, 12000) }),
+          batchId: batch.id, signal: { issue: 'other', reportCount: reports.length, windowMinutes: 1440, reportIds: reports.map(r => r.id) },
+        }));
+      } catch (error) { batch.status = 'failed'; batch.error = error instanceof Error ? error.message : 'Summary failed'; this.store.saveBatch(this.organizationId, this.repo.id, batch); }
+    }
   }
   private newTask(feedback: FeedbackInput): Task {
     const task: Task = { id: randomUUID(), organizationId: this.organizationId, repositoryId: this.repo.id,
@@ -45,7 +67,7 @@ export class Engine {
   }
   evidence(task: Task) {
     const logs = this.store.logs(this.organizationId, this.repo.id, new Date(this.clock().getTime() - 30 * 60_000).toISOString());
-    return { signal: task.signal ?? null, logs: task.signal && task.signal.issue !== 'other' ? logs.filter(log => log.issue === task.signal!.issue) : logs };
+    return { signal: task.signal ?? null, reports: this.store.reviews(this.organizationId, this.repo.id).filter(r => task.signal?.reportIds.includes(r.id)), logs: task.signal && task.signal.issue !== 'other' ? logs.filter(log => log.issue === task.signal!.issue) : logs };
   }
   async answer(task: Task) {
     if (this.conversation) {
@@ -126,6 +148,7 @@ export class Engine {
   }
   pendingJobs() { return this.store.jobs(this.organizationId).filter(job => job.status === 'pending'); }
   async drain() {
+    await this.summarizePending();
     for (const job of this.pendingJobs()) await this.runJob(job.id);
   }
   async runJob(id: string): Promise<Task | undefined> {
@@ -140,9 +163,13 @@ export class Engine {
         // Revision investigations must use the current base, not the previous proposal's checkout.
         const snapshot = { ...task, plans: [] };
         const workspace = await isolatedCheckout(this.repo, snapshot, this.root, `investigate-${job.id}`);
-        const proposal = proposalSchema.parse(await this.provider.investigate(task, workspace, this.evidence(task)));
+        const evidence = this.evidence(task);
+        const proposal = proposalSchema.parse(await this.provider.investigate(task, workspace, evidence));
+        if(proposal.confidence && evidence.reports.length && evidence.reports.every(r=>r.sample)) {
+          proposal.confidence.legitimacy = 'sample'; proposal.confidence.legitimacyReason = 'Authored demo reviews; no real-user authenticity claim.';
+        }
         if (await baseCommit(this.repo) !== commit) throw new DomainError('Repository base moved during investigation. Revise again.');
-        this.store.mutate(task.id, this.organizationId, { type: 'proposal.prepared', actor: this.provider.label, at: this.at() }, task => {
+        this.store.mutate(task.id, this.organizationId, { type: 'proposal.prepared', actor: this.provider.label, at: this.at(), detail: JSON.stringify(this.provider.lastRun) }, task => {
           requireState(task, ['investigating']);
           task.plans.push({ ...proposal, version: task.plans.length + 1, baseCommit: commit,
             expiresAt: new Date(this.clock().getTime() + 24 * 60 * 60_000).toISOString(), commentCount: task.comments.length });
@@ -160,8 +187,21 @@ export class Engine {
         this.store.mutate(task.id, this.organizationId, { type: 'changes.ready', actor: 'executor', at: this.at() }, task => {
           requireState(task, ['implementing']);
           task.result = result;
+          task.implementationRun = this.provider.lastRun;
           task.status = 'changes_ready';
         });
+      }
+      if (job.kind === 'implement' && this.publish) {
+        try {
+          const url = await this.publish(this.get(job.taskId));
+          this.store.mutate(job.taskId, this.organizationId, {type:'publication.ready',actor:'release-worker',at:this.at()}, current => {
+            current.publication = {status:'published',url,at:this.at()};
+          });
+        } catch (error) {
+          this.store.mutate(job.taskId,this.organizationId,{type:'publication.failed',actor:'release-worker',at:this.at()},current=>{
+            current.publication={status:'failed',error:error instanceof Error ? error.message.slice(0,1000) : 'Publication failed',at:this.at()};
+          });
+        }
       }
       this.store.finishJob(job);
     } catch (error) {

@@ -4,6 +4,8 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, TaskNotFoundError, type Audit, type Job, type Task, type FeedbackInput, type Issue, type ProductLog, type DemoReview } from './domain.js';
 
+import type { ReviewBatch, ReviewGrouping } from './review-batch.js';
+
 /** Single-host MVP storage. Mutations, jobs, and audit records commit together. */
 export class Store {
   private db: DatabaseSync;
@@ -12,6 +14,7 @@ export class Store {
     this.db = new DatabaseSync(path);
     this.db.exec(`
       PRAGMA journal_mode=WAL;
+      CREATE TABLE IF NOT EXISTS review_batches (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, repository_id TEXT NOT NULL, data TEXT NOT NULL);
       PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, source TEXT NOT NULL,
@@ -49,7 +52,7 @@ export class Store {
       const reviews = this.reviews(org, repo);
       const existing = reviews.find(item => item.feedback.externalId === review.feedback.externalId);
       if (existing) {
-        if (JSON.stringify(existing.feedback) !== JSON.stringify(review.feedback) || existing.issue !== review.issue || existing.sample !== review.sample) {
+        if (JSON.stringify(existing.feedback) !== JSON.stringify(review.feedback) || existing.issue !== review.issue || existing.sample !== review.sample || existing.groupKey !== review.groupKey) {
           throw new DomainError('This source ID already exists with different content.');
         }
         return { review: existing, duplicate: true };
@@ -58,7 +61,7 @@ export class Store {
         // An intake category is not an issue identity. In particular, never merge all
         // unclassified feedback (or every mention of an export) into one task.
         const reportText = (item: DemoReview) => item.feedback.text.replace(/^Reported by [^\n]*\n/, '').trim().replace(/\s+/g, ' ').toLowerCase();
-        const linked = reviews.find(item => item.sample === review.sample && (!review.sample || item.feedback.source === review.feedback.source) && item.feedback.category === review.feedback.category && reportText(item) === reportText(review) && item.taskId &&
+        const linked = reviews.find(item => item.sample === review.sample && (!review.sample || item.feedback.source === review.feedback.source) && item.feedback.category === review.feedback.category && (review.sample && review.groupKey ? item.groupKey === review.groupKey : reportText(item) === reportText(review)) && item.taskId &&
           ['received', 'investigating', 'discussing', 'revising'].includes(this.get(item.taskId, org).status));
         if (linked) {
           review.taskId = linked.taskId; review.disposition = 'grouped';
@@ -86,6 +89,44 @@ export class Store {
       }
       this.db.prepare('INSERT INTO demo_reviews VALUES (?, ?, ?, ?)').run(org, repo, review.feedback.externalId, JSON.stringify(review));
       return { review, duplicate: false };
+    });
+  }
+  collectReview(org: string, repo: string, review: DemoReview) {
+    return this.demoReview(org, repo, review, () => { throw new Error('Collection must not create a task.'); });
+  }
+  batches(org: string, repo: string): ReviewBatch[] {
+    return this.db.prepare('SELECT data FROM review_batches WHERE organization_id=? AND repository_id=? ORDER BY rowid DESC')
+      .all(org, repo).map(row => JSON.parse(String(row.data)));
+  }
+  queueBatch(org: string, repo: string, id: string): ReviewBatch {
+    return this.tx(() => {
+      const batches = this.batches(org, repo);
+      const existing = batches.find(batch => batch.id === id);
+      if (existing) return existing;
+      const reserved = new Set(batches.filter(batch => batch.status !== 'failed').flatMap(batch => batch.reportIds));
+      const batch: ReviewBatch = { id, at: new Date().toISOString(), status: 'pending', taskIds: [],
+        reportIds: this.reviews(org, repo).filter(r => !r.taskId && r.disposition !== 'quarantined' && !reserved.has(r.id)).map(r => r.id) };
+      this.db.prepare('INSERT INTO review_batches VALUES (?, ?, ?, ?)').run(id, org, repo, JSON.stringify(batch));
+      return batch;
+    });
+  }
+  saveBatch(org: string, repo: string, batch: ReviewBatch) {
+    this.db.prepare('UPDATE review_batches SET data=? WHERE id=? AND organization_id=? AND repository_id=?').run(JSON.stringify(batch), batch.id, org, repo);
+  }
+  finishBatch(org: string, repo: string, batch: ReviewBatch, grouping: ReviewGrouping, makeTask: (group: ReviewGrouping['groups'][number], reports: DemoReview[]) => Task) {
+    return this.tx(() => {
+      const reviews = this.reviews(org, repo);
+      for (const group of grouping.groups) {
+        const reports = reviews.filter(review => group.reportIds.includes(review.id));
+        const task = group.spam ? undefined : makeTask(group, reports);
+        if (task) { this.createInside(task); batch.taskIds.push(task.id); }
+        for (const review of reports) {
+          review.taskId = task?.id; review.disposition = group.spam ? 'quarantined' : 'grouped'; review.reason = group.reason;
+          this.db.prepare('UPDATE demo_reviews SET data=? WHERE organization_id=? AND repository_id=? AND external_id=?')
+            .run(JSON.stringify(review), org, repo, review.feedback.externalId);
+        }
+      }
+      batch.status = 'ready'; this.saveBatch(org, repo, batch); return batch;
     });
   }
   hasReceipt(id: string): boolean { return !!this.db.prepare('SELECT id FROM receipts WHERE id=?').get(id); }

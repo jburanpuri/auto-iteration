@@ -1,0 +1,12 @@
+{
+  "framework": null,
+  "buildCommand": "",
+  "outputDirectory": "public",
+  "rewrites": [
+    {"source":"/api/:path*","destination":"/api/gateway"},
+    {"source":"/health","destination":"/api/gateway"},
+    {"source":"/product","destination":"/product/index.html"},
+    {"source":"/product/","destination":"/product/index.html"}
+  ],
+  "headers":[{"source":"/(.*)","headers":[{"key":"X-Content-Type-Options","value":"nosniff"},{"key":"Referrer-Policy","value":"same-origin"}]}]
+}
