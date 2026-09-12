@@ -1,10 +1,21 @@
 {
-  "kind": "demo-reset",
-  "resetId": "e5a821df-b9f1-423e-88b3-55a2b42606ed",
-  "at": "2026-09-12T20:21:52.984Z",
-  "bugs": [
-    "Empty contact CSV export",
-    "Contact status filter does not apply",
-    "Contact search waits two seconds"
-  ]
+  "taskId": "dc484d5c-1bf2-4584-a52b-3c77018dec07",
+  "proposalVersion": 1,
+  "approvedBy": "197898081264467968",
+  "baseCommit": "5553a87cfe06ab0e8693b95157e997d983160e6d",
+  "model": "gpt-6-astra",
+  "reasoning": "low",
+  "codexRun": {
+    "threadId": "01a0974c-8bb1-71f0-9a45-0f85bca9f11b",
+    "model": "gpt-6-astra",
+    "reasoning": "low"
+  },
+  "tests": "passed",
+  "testCommand": [
+    "/usr/local/bin/node",
+    "--test"
+  ],
+  "publishedAt": "2026-09-12T20:26:52.094Z",
+  "patchSha256": "0d37d6c2d9ba234f94ad5785ceb336105ccea2f80b4d13baf757448d227e6208",
+  "testsSha256": "0f85ea5d279b32b7ca628f7d2288eb989ab587a3edd0a1eaf44ab443fb8891d7"
 }

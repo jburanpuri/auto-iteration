@@ -40,11 +40,12 @@ export default async function handler(req,res) {
     if(typeof body==='string') { if(body.length>16000)return send(413,{error:'Feedback is too long.'});body=JSON.parse(body); }
     if(!body||JSON.stringify(body).length>16000)return send(400,{error:'Invalid request.'});
     if(path==='/api/session') {
-      if(typeof body.code!=='string'||!process.env.DEMO_ACCESS_CODE||hash(body.code)!==hash(process.env.DEMO_ACCESS_CODE))return send(401,{error:'Enter the demo access code to start workflows.'});
+      if(typeof body.code!=='string'||!process.env.DEMO_ACCESS_CODE||hash(body.code)!==hash(process.env.DEMO_ACCESS_CODE))return send(401,{error:'Enter the demo access code to unlock feedback and workflow controls.'});
       res.setHeader('Set-Cookie',`demo_session=${hash(body.code)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`);
       return send(200,{ok:true});
     }
     if(path==='/api/feedback') {
+      if(!authorized(req))return send(401,{error:'Enter the demo access code to submit feedback.'});
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.externalId)||typeof body.reviewer!=='string'||!body.reviewer.trim()||body.reviewer.length>80||typeof body.text!=='string'||!body.text.trim()||body.text.length>11000||!['general','ui_ux','performance'].includes(body.category))return send(400,{error:'Enter your name, category, and feedback.'});
       const feedback={externalId:body.externalId,source:'vercel-feedback',category:body.category,title:`${body.reviewer.trim()}: ${body.text.trim().slice(0,100)}`,text:`Reported by ${body.reviewer.trim()} (self-reported name).\n${body.text.trim()}`};
       await create(`inbox/feedback/${body.externalId}.json`,feedback);
@@ -56,7 +57,7 @@ export default async function handler(req,res) {
       await create(`inbox/reset/${body.resetId}.json`,{resetId:body.resetId});return send(202,{status:'pending',id:body.resetId});
     }
     if(path==='/api/workflow/start') {
-      if(!authorized(req))return send(401,{error:'Enter the demo access code to start workflows.'});
+      if(!authorized(req))return send(401,{error:'Enter the demo access code to unlock feedback and workflow controls.'});
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.batchId))return send(400,{error:'Invalid batch ID.'});
       await create(`inbox/start/${body.batchId}.json`,{batchId:body.batchId});
       return send(202,{status:'pending',id:body.batchId});

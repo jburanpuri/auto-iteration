@@ -16,7 +16,7 @@ Production: https://northstar-auto-iteration.vercel.app
 
 The reviews page deliberately omits issue-summary cards; technical context and decisions are in Discord.
 
-The workflow button asks for the demo access code stored locally in `.local/demo-access-code`. It starts a session via POST `/api/session`. Public feedback submission (POST `/api/feedback`) needs no code. POST `/api/workflow/start` queues a manual summary and requires that session. There is no public approval endpoint.
+The workflow button asks for the demo access code stored locally in `.local/demo-access-code`. It starts a session via POST `/api/session`. Feedback submission (POST `/api/feedback`) also requires this session; the form asks for the code when needed. POST `/api/workflow/start` queues a manual summary and requires that session. There is no public approval endpoint.
 
 Local routes:
 - http://127.0.0.1:4348/product/ — product and export

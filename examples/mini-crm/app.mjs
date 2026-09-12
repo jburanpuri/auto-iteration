@@ -58,6 +58,13 @@ async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
   let response = await fetch(path, options);
   if(response.status === 401 && ['127.0.0.1','localhost'].includes(location.hostname)) { await fetch('/'); response = await fetch(path, options); }
+  if(response.status === 401 && path === '/api/feedback' && !['127.0.0.1','localhost'].includes(location.hostname)) {
+    const code = window.prompt('Enter the demo access code to submit feedback.');
+    if(!code) throw new Error('Feedback not sent. A demo access code is required.');
+    const session = await fetch('/api/session', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({code}) });
+    if(!session.ok) { const error = await session.json(); throw new Error(error.error || 'Invalid demo access code.'); }
+    response = await fetch(path, options);
+  }
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Request failed.'); return data;
 }
 $('#preview-banner').hidden = !preview;

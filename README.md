@@ -4,6 +4,8 @@ Auto Iteration turns customer feedback into tested product improvements, with en
 
 Current hosted demo: **https://northstar-auto-iteration.vercel.app**. Product, Feedback, and Reviews are separate navbar pages. Individual feedback triggers investigation; a manual workflow groups the bulk review inbox, investigates code, and posts concise technical proposals with evidence-based confidence to Discord. Approved fixes are tested and published directly to this Vercel demo by the local worker. No PR is created. See [current test routes and runtime notes](docs/TEST_ROUTES.md).
 
+The public demo requires a private demo access code to submit feedback, start a workflow, or reset. Browsing is public. Real credentials stay in ignored local files and Vercel's encrypted environment; copy `.env.example` and supply your own credentials when cloning. See [public repository security](docs/SECURITY.md).
+
 Run `npm run demo:hosted` on the laptop that holds the Codex login. The worker uses **GPT-6 Astra with low reasoning**. Vercel stores queued submissions while the worker is offline.
 
 

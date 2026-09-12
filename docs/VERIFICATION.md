@@ -1,5 +1,12 @@
 # Verification record
 
+## Public-repository access hardening — September 12, 2026
+
+- All 41 integration tests pass. Hosted security tests cover feedback/start/reset authentication, forged sessions, wrong origin, key rotation, and fail-closed behavior without configuration.
+- Verified on the live deployment: anonymous feedback, workflow start, and reset return 401; the previous session is rejected; the rotated private code authenticates; invalid authorized input reaches validation without creating feedback.
+- Secret scan found no matches among 190 reachable historical file objects and no tracked secret paths. Local credentials remain ignored and have owner-only file permissions.
+- The demo code was rotated in Vercel; its value is never embedded in browser assets. See SECURITY.md for operation and publishing guidance.
+
 ## Current hosted workflow — September 12, 2026
 
 - Real Codex SDK investigation, one engineer-requested revision, v2 approval, implementation, six passing product regression tests, and actual Vercel publication completed for task `e30174d7-2f46-46b0-8abc-281ea2fe361a`.

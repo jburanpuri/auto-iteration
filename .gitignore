@@ -7,3 +7,13 @@ dist/
 coverage/
 *.sqlite*
 .DS_Store
+
+# Local credentials, exports, and account sessions must never be published.
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+auth.json
+credentials.json
+*.har
