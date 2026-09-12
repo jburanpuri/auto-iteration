@@ -10,7 +10,7 @@ The first success metric is **one feedback item → one useful discussion → on
 
 - A small software team with one customer-facing application and a Slack workspace.
 - One configured organization, repository, base branch, Slack channel, and list of approvers.
-- Feedback begins as a manually entered support ticket or exported JSON record. Slack intake accepts `@bot feedback <report>`.
+- Feedback begins as a manually entered support ticket or exported JSON record. The local Demo CRM endpoint accepts JSON at `POST /api/feedback`. Slack intake accepts `@bot feedback <report>`.
 - Each report has a stable source ID, original text, title, and a linked task. Never discard separate customer reports just because the wording matches.
 - One task gets one Slack thread. Engineers can discuss there without being separate AI agents.
 - Code changes require concrete acceptance criteria. Vague reports need clarification; non-code problems remain business/product decisions.

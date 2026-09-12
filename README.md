@@ -29,6 +29,31 @@ The proposal and sample conversation are deterministic fixtures for this one bug
 
 ## Try the workflow yourself
 
+### Submit feedback through an API
+
+The fictional **Demo CRM** product has a local-only feedback route. It reuses the real empty-export bug fixture and does not need a GitHub App, a deployed product, or external API keys.
+
+Terminal 1:
+
+```sh
+npm run feedback:api
+```
+
+This creates the fixture repository if needed and starts `POST http://127.0.0.1:4318/api/feedback`. It creates a random intake token in `.local/feedback-api-token`; the sender reads it automatically. Investigations run in the background and stop at discussion. Approval still requires the CLI or a configured Slack approver.
+
+Terminal 2:
+
+```sh
+npm run feedback:send -- examples/feedback-api.json
+npm run feedback:send -- status TASK_ID
+```
+
+Edit `examples/feedback-api.json` to write your own report. Give each new report a new `externalId`; reuse the same ID only when retrying the same payload. The scripted provider only supports the CSV-export issue. The API body contains `externalId`, `title`, and `text`; organization, source, and repository routing are assigned by the server.
+
+Then use `comment`, `revise`, and `approve` below. While the API server is running, it processes pending jobs automatically unless `JOB_RUNNER=inngest` is set. It exposes a token-protected task status route but no approval endpoint.
+
+### Use only the CLI
+
 ```sh
 npm run cli -- init
 npm run cli -- submit examples/feedback.json
@@ -58,7 +83,7 @@ If the worker dies mid-job, run `npm run cli -- recover`. On this single host, r
 | Concern | Choice | Current implementation |
 | --- | --- | --- |
 | Backend | Node.js + TypeScript | One application, no web dashboard |
-| Feedback intake | JSON file or Slack mention | Stable source ID, validation, duplicate delivery handling |
+| Feedback intake | Local HTTP API, JSON file, or Slack mention | Stable source ID, validation, duplicate delivery handling |
 | Engineering discussion | Slack Bolt + Socket Mode | One configured channel, one thread per task; CLI alternative |
 | Workflow | Persisted jobs + optional Inngest | Transactional job enqueue, atomic claims, restart recovery |
 | Proposals and coding | Provider interface + Codex SDK | Scripted fixture by default; optional live Codex adapter |
@@ -88,6 +113,9 @@ src/engine.ts          Business rules and workflow transitions
 src/providers.ts       Scripted fixture and live Codex adapters
 src/git.ts             Isolated checkouts, tests, review artifacts
 src/cli.ts             Manual workflow commands
+src/feedback-api.ts    Authenticated local demo feedback route
+src/feedback-server.ts Demo HTTP server and background job processing
+src/feedback-send.ts   Manual feedback submission/status client
 src/slack.ts           Slack thread/command integration
 src/worker.ts          Optional Inngest adapter and outbox dispatcher
 src/research.ts        Brave Search adapter

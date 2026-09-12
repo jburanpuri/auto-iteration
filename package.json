@@ -8,6 +8,8 @@
   },
   "scripts": {
     "demo": "node --import=tsx src/demo.ts",
+    "feedback:api": "node --import=tsx src/feedback-server.ts",
+    "feedback:send": "node --import=tsx src/feedback-send.ts",
     "cli": "node --import=tsx src/cli.ts",
     "slack": "node --import=tsx src/slack.ts",
     "worker": "node --import=tsx src/worker.ts",

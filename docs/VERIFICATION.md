@@ -5,9 +5,10 @@ Validated locally on 2026-09-12 using Node.js 22.20.0.
 | Check | Result |
 | --- | --- |
 | `npm run check` | Pass |
-| `npm test` | 15 passed; 0 failed |
+| `npm test` | 19 passed; 0 failed, including actual HTTP intake tests |
 | `npm run demo` | Pass; real isolated Git edit and three passing repository tests |
 | CLI init → submit → run → list | Pass; persistent task reaches discussion |
+| Feedback API | HTTP acceptance, auth, schema/body limits, duplicate/conflicting IDs, and status retrieval pass |
 | Inngest adapter startup | Pass; local HTTP server starts |
 | `GET /health` | 200 with `status: ok` |
 | `GET /api/inngest` | 200; one registered function in development mode |

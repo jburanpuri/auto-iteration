@@ -1,0 +1,5 @@
+{
+  "externalId": "demo-crm-review-001",
+  "title": "Export crashes when filters leave no customers",
+  "text": "In Demo CRM, I filter the customer list to zero results and click Export CSV. It crashes instead of downloading a file."
+}
