@@ -14,7 +14,7 @@ let visibleContacts = contacts;
 function renderContacts() {
   const query = $('#contact-search').value.trim().toLowerCase();
   const status = $('#contact-status').value;
-  visibleContacts = contacts.filter(contact => `${contact.name} ${contact.email}`.toLowerCase().includes(query) && (status === 'all' || contact.status === status));
+  visibleContacts = contacts.filter(contact => `${contact.name} ${contact.email}`.toLowerCase().includes(query));
   $('#contact-count').textContent = `${visibleContacts.length} contacts`;
   const list = $('#contact-rows'); list.replaceChildren();
   for (const contact of visibleContacts) {
