@@ -73,8 +73,14 @@ export class DiscordController {
     let task: Task | undefined;
     try {
       const command = parseDiscordCommand(message.content, this.config.botId);
+      // Every model-triggering Discord path is restricted, including free-form replies
+      // and new feedback, not just the final approval button.
+      if (!this.config.approverIds.has(message.authorId)) {
+        if (command || message.replyTo) throw new DomainError('This user is not authorized to use the engineering bot.');
+        return;
+      }
       if (command?.kind === 'help') {
-        await this.post(`Submit feedback on the Northstar page, or @bot feedback <report>.\nReply to a proposal to discuss it. @bot revise 1 incorporates comments; @bot approve 2 approves exactly v2.\nOther commands: @bot status, @bot decline. Only configured engineers can approve.\n${this.engine.provider.label}`, undefined, message.id);
+        await this.post(`Submit feedback on the Northstar page, or @bot feedback <report>.\nReply to a proposal to discuss it. @bot revise 1 incorporates comments; @bot approve 2 approves exactly v2.\nOther commands: @bot status, @bot decline. Only configured engineers can use the bot.\n${this.engine.provider.label}`, undefined, message.id);
       } else if (command?.kind === 'feedback') {
         task = this.engine.submit({ source: `discord:${this.scope}`, externalId: message.id,
           title: command.text.slice(0, 180), text: command.text }).task;

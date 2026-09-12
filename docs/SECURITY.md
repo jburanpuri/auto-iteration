@@ -6,7 +6,7 @@ The hosted demo requires its private `DEMO_ACCESS_CODE` for all actions that que
 
 The feedback form asks for the code only if its session is missing or invalid. No OpenAI key is entered into the site. Codex credentials remain in the operator's local Codex account directory; the Node worker uses that login. A clone of this repository does not include or grant access to that account. Contributors must use their own Codex login and their own Discord/Vercel credentials.
 
-The localhost engineer console trusts the local operator and is bound to loopback. Do not expose it through a tunnel or bind it to a public interface. Discord approvals are restricted to configured engineer IDs. The website has no public approval endpoint.
+The localhost engineer console trusts the local operator and is bound to loopback. Do not expose it through a tunnel or bind it to a public interface. All Discord bot actions—including new feedback, ordinary conversation replies, revisions, and approval—are restricted to configured engineer IDs. The website has no public approval endpoint.
 
 Before publishing, inspect `git ls-files`, audit reachable Git history for secrets, and keep only empty/example configuration in Git. If a credential is ever committed, rotate it with its provider; deleting the file alone does not remove it from history. Neither this audit nor ignore rules guarantee that future commits are secret-free.
 

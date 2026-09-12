@@ -2,7 +2,9 @@
 
 ## Public-repository access hardening — September 12, 2026
 
-- All 41 integration tests pass. Hosted security tests cover feedback/start/reset authentication, forged sessions, wrong origin, key rotation, and fail-closed behavior without configuration.
+- All Discord model-triggering paths now require a configured engineer ID, including new feedback, free-form conversations, change requests, and approvals. The deployed worker allowlist contains only the owner. Unauthorized-path tests verify no task mutation or job creation.
+
+- All 42 integration tests pass. Hosted security tests cover feedback/start/reset authentication, forged sessions, wrong origin, key rotation, and fail-closed behavior without configuration.
 - Verified on the live deployment: anonymous feedback, workflow start, and reset return 401; the previous session is rejected; the rotated private code authenticates; invalid authorized input reaches validation without creating feedback.
 - Secret scan found no matches among 190 reachable historical file objects and no tracked secret paths. Local credentials remain ignored and have owner-only file permissions.
 - The demo code was rotated in Vercel; its value is never embedded in browser assets. See SECURITY.md for operation and publishing guidance.

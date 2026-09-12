@@ -36,7 +36,7 @@ function transport() {
   return { sent, async send(text: string, replyTo?: string) { const id = `out-${sent.length}`; sent.push({ id, text, replyTo }); return [id]; } };
 }
 const input = (id: string, content: string, extra: Partial<DiscordInput> = {}): DiscordInput => ({ id, content,
-  guildId: 'guild', channelId: 'general', authorId: 'engineer', bot: false, ...extra });
+  guildId: 'guild', channelId: 'general', authorId: 'lead', bot: false, ...extra });
 
 test('three reports escalate atomically, duplicate deliveries do not inflate the signal, windows and repositories stay separate', async t => {
   const { engine, store } = await setup(t);
@@ -73,8 +73,8 @@ test('Discord sends one result to the owning team and enforces human versioned a
   await engine.drain(); await general.sync(); await perf.sync();
   assert.equal(engine.get(task.id).discord?.channelId, 'perf');
   const rootMessage = engine.get(task.id).discord!.messageId;
-  const message = (id: string, content: string, authorId = 'engineer') => input(id, content, { channelId: 'perf', replyTo: rootMessage, authorId });
-  await perf.handle(message('unauthorized', '<@123> approve 1'));
+  const message = (id: string, content: string, authorId = 'lead') => input(id, content, { channelId: 'perf', replyTo: rootMessage, authorId });
+  await perf.handle(message('unauthorized', '<@123> approve 1', 'outsider'));
   assert.equal(engine.get(task.id).status, 'discussing');
   await perf.handle(message('comment', 'Keep the headers, please.'));
   await perf.handle(message('comment', 'Keep the headers, please.'));
@@ -445,4 +445,22 @@ test('preloaded feedback stays idle until Start, then retries queue only three g
   assert.match(tasks[0]!.feedback.text, /Alex Chen/); assert.match(tasks[0]!.feedback.text, /Taylor Chen/);
   assert.equal(engine.store.reviews('team', engine.repo.id).length, 120);
   assert.equal((await fetch(`${base}/api/operator/demo-batch`, { method: 'POST', headers: {...headers, Origin:'http://127.0.0.1:1'}, body: JSON.stringify({batchId:randomUUID()}) })).status, 403);
+});
+
+
+test('unlisted Discord users cannot start investigations, conversations, revisions, or implementations', async t => {
+  const {engine,store}=await setup(t);const out=transport();
+  const controller=new DiscordController(engine,{guildId:'guild',channelId:'general',botId:'123',approverIds:new Set(['lead'])},out);
+  t.after(()=>controller.stop());
+  await controller.handle(input('outsider-intake','<@123> feedback Export is broken',{authorId:'outsider'}));
+  assert.equal(engine.pendingJobs().length,0);assert.equal(store.list('team').length,0);
+  const task=engine.submit(report).task;await engine.drain();await controller.sync();
+  const replyTo=engine.get(task.id).discord!.messageId;
+  const before=JSON.stringify(engine.get(task.id));
+  for(const [i,content] of ['Please change the solution','<@123> changes 1 Make it green','<@123> revise 1','<@123> approve 1'].entries()) {
+    await controller.handle(input(`outsider-${i}`,content,{authorId:'outsider',replyTo}));
+  }
+  await controller.stop();
+  assert.equal(JSON.stringify(engine.get(task.id)),before);assert.equal(engine.pendingJobs().length,0);
+  assert.ok(out.sent.slice(-4).every(m=>m.text.includes('not authorized')));
 });

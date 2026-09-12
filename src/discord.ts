@@ -95,6 +95,7 @@ export async function startDiscord(engine: Engine, runJobs = true) {
       const match = /^orbit:(approve|changes|submit):([a-f0-9-]{36}):(\d+)$/.exec(interaction.customId);
       if (!match) return;
       void (async () => {
+        if (!settings.approverIds.has(interaction.user.id)) throw new Error('This user is not authorized to use the engineering bot.');
         const controller = controllers.get(interaction.channelId ?? '');
         const task = engine.get(match[2]!);
         if (!controller || task.discord?.channelId !== interaction.channelId || task.discord.guildId !== interaction.guildId) throw new Error('This action does not belong to this channel.');
