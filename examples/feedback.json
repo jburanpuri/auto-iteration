@@ -1,0 +1,6 @@
+{
+  "externalId": "customer-review-001",
+  "source": "manual",
+  "title": "CSV export crashes with no results",
+  "text": "After filtering out all customers, clicking Export CSV crashes instead of downloading a file."
+}

@@ -1,0 +1,29 @@
+{
+  "name": "auto-iteration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.20.0"
+  },
+  "scripts": {
+    "demo": "node --import=tsx src/demo.ts",
+    "cli": "node --import=tsx src/cli.ts",
+    "slack": "node --import=tsx src/slack.ts",
+    "worker": "node --import=tsx src/worker.ts",
+    "check": "tsc --noEmit",
+    "test": "node --import=tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.154.0",
+    "@slack/bolt": "5.1.0",
+    "dotenv": "17.4.2",
+    "inngest": "4.20.0",
+    "zod": "4.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.2",
+    "tsx": "4.23.13",
+    "typescript": "7.0.2"
+  }
+}
