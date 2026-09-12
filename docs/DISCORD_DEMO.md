@@ -1,6 +1,8 @@
 # Northstar feedback walkthrough
 
-The main demo now uses one company feedback page. Run `npm run demo:live`, open `http://127.0.0.1:4318`, enter a name, write “Exporting an empty contact list fails,” and submit. A single CSV-export report triggers Codex investigation.
+The main demo uses one company feedback page. Run `npm run demo:live`, open `http://127.0.0.1:4318`, enter a name and any product feedback, and submit. A single real report triggers Codex classification and investigation. CSV export is an optional example, not an intake restriction.
+
+The agent classifies each report as a bug, feature request, usability concern, performance problem, question, spam, or other issue, with a free-form issue description. It inspects the configured repository and available logs, chooses engineering, UI/UX, or performance, and explains its routing. Unclear or out-of-repository requests require clarification; classification does not imply the problem can be fixed. Spam and business-only requests can be marked non-code. Exact repeat reports share an open investigation; broad categories are never used to merge unrelated reports. Semantic clustering is not implemented.
 
 The Discord proposal includes **Approve vN** and **Request changes** buttons. Request changes opens a text modal; submitting it records the engineer's feedback, gets a conversational handoff, and queues a new Codex plan. Approval is checked against the configured Discord user IDs and exact plan version. Plain discussion never authorizes coding. Existing mention commands still work.
 
@@ -117,3 +119,15 @@ For a real hackathon PR, the shortest next step is a dedicated GitHub repository
 - Local tests execute trusted repository code on the host. The clone protects the original files; it is not a process sandbox. Codex's model calls can send code context to its provider, and OpenRouter conversation calls send the supplied discussion/evidence to the selected provider.
 - Sending a Discord message and recording its delivery are not one atomic transaction. A crash between them can duplicate an announcement; task creation and implementation approvals are independently deduplicated. Missed Discord events during a long outage are not backfilled.
 - Only the demo's own log MCP is supplied automatically. Enterprise isolation, external monitoring, robust customer identity, public intake, approval buttons, and automatic PR publication are future work.
+
+## Categories and concise Discord updates
+
+The feedback form offers **UI/UX issue**, **Performance**, and **General**. The selected category controls the initial destination: `DISCORD_UI_UX_CHANNEL_ID`, `DISCORD_PERFORMANCE_CHANNEL_ID`, or `DISCORD_CHANNEL_ID`, respectively. Once a discussion is attached, it stays in its channel. Older submissions without a category continue to use the agent's team suggestion. Identical feedback submitted under different categories remains separate.
+
+Each completed investigation sends one concise message. Actionable fixes show the proposed change, a key code finding, planned validation, and versioned approval/change buttons. Clarification results show the unresolved question and an **Add details** button, never approval. Non-code results show a brief team-review note. Full evidence, acceptance criteria, audit history, and artifacts remain in the local engineer console. Routine investigation announcements and repeated feedback headers are no longer posted. Existing channel history is not deleted or replayed on restart.
+
+## Start a prepared feedback batch
+
+Open the separate engineer console (port 4319 by default; the current running demo uses 4349). Six labeled sample feedback entries are visible before anything is submitted. Click **Start workflow** to queue three issues: empty contact export (General), feedback confirmation (UI/UX issue), and unnecessary background polling (Performance). Each issue includes two sample participants' reports. Codex investigates and summarizes each issue, then the bot sends its result to the selected team. Every implementation still needs that team's authorized approval.
+
+The public Northstar form starts with an empty name field and contains no batch/demo controls. Retrying the same batch request does not create extra tasks. Another deliberate click starts a fresh batch. The scripted provider only implements the CSV fixture; run live Codex to investigate all three examples.

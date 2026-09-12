@@ -5,11 +5,28 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBu
 import { DiscordController } from './discord-controller.js';
 import type { Engine } from './engine.js';
 import { runtime } from './runtime.js';
-import type { Task } from './domain.js';
+import { categoryTeam, type Task } from './domain.js';
+
+/** Split long conversational replies at paragraph/word boundaries, never mid-word when avoidable. */
+export function splitDiscordText(text: string): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 1900) {
+    let end = remaining.lastIndexOf('\n', 1900);
+    if (end < 950) end = remaining.lastIndexOf(' ', 1900);
+    if (end < 950) end = 1900;
+    if (/[\uD800-\uDBFF]/.test(remaining[end - 1]!)) end--;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end).trimStart();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
 
 export function routeChannel(task: Task, channels: Record<'engineering' | 'ui_ux' | 'performance', string>) {
   // Once discussion starts, ownership stays fixed even if a revision suggests a different team.
-  return task.discord?.channelId ?? channels[task.plans[0]?.team ?? 'engineering'] ?? channels.engineering;
+  const team = task.feedback.category ? categoryTeam[task.feedback.category] : task.plans[0]?.team ?? 'engineering';
+  return task.discord?.channelId ?? channels[team] ?? channels.engineering;
 }
 
 export function discordSettings() {
@@ -52,14 +69,17 @@ export async function startDiscord(engine: Engine, runJobs = true) {
         async send(text, replyTo, controls) {
           const ids: string[] = [];
           // Mention parsing and link previews are disabled for customer/model-generated content.
-          const characters = Array.from(text);
-          for (let offset = 0; offset < characters.length; offset += 950) {
-            const sent = await channel.send({ content: characters.slice(offset, offset + 950).join(''),
+          const chunks = splitDiscordText(text);
+          for (const [index, content] of chunks.entries()) {
+            const row = new ActionRowBuilder<ButtonBuilder>();
+            if (controls?.canApprove) row.addComponents(new ButtonBuilder()
+              .setCustomId(`orbit:approve:${controls.taskId}:${controls.version}`).setLabel(`Approve v${controls.version}`).setStyle(ButtonStyle.Success));
+            if (controls) row.addComponents(new ButtonBuilder()
+              .setCustomId(`orbit:changes:${controls.taskId}:${controls.version}`)
+              .setLabel(controls.needsClarification ? 'Add details' : 'Request changes').setStyle(ButtonStyle.Secondary));
+            const sent = await channel.send({ content,
               allowedMentions: { parse: [], repliedUser: false }, flags: MessageFlags.SuppressEmbeds,
-              ...(controls && offset + 950 >= characters.length ? { components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder().setCustomId(`orbit:approve:${controls.taskId}:${controls.version}`).setLabel(`Approve v${controls.version}`).setStyle(ButtonStyle.Success),
-                new ButtonBuilder().setCustomId(`orbit:changes:${controls.taskId}:${controls.version}`).setLabel('Request changes').setStyle(ButtonStyle.Secondary),
-              )] } : {}),
+              ...(controls && index === chunks.length - 1 ? { components: [row] } : {}),
               ...(replyTo ? { reply: { messageReference: replyTo, failIfNotExists: false } } : {}) });
             ids.push(sent.id);
           }
@@ -79,9 +99,9 @@ export async function startDiscord(engine: Engine, runJobs = true) {
         const task = engine.get(match[2]!);
         if (!controller || task.discord?.channelId !== interaction.channelId || task.discord.guildId !== interaction.guildId) throw new Error('This action does not belong to this channel.');
         if (interaction.isButton() && match[1] === 'changes') {
-          await interaction.showModal(new ModalBuilder().setCustomId(`orbit:submit:${task.id}:${match[3]}`).setTitle(`Request changes to plan v${match[3]}`)
+          await interaction.showModal(new ModalBuilder().setCustomId(`orbit:submit:${task.id}:${match[3]}`).setTitle(task.plans.at(-1)?.disposition === 'needs_clarification' ? 'Help us understand the issue' : `Request changes to plan v${match[3]}`)
             .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(new TextInputBuilder()
-              .setCustomId('feedback').setLabel('What should Codex change?').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000))));
+              .setCustomId('feedback').setLabel(task.plans.at(-1)?.disposition === 'needs_clarification' ? 'Which page, control, and behavior?' : 'What should Codex change?').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(4000))));
           return;
         }
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });

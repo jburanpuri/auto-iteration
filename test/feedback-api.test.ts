@@ -5,7 +5,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AddressInfo } from 'node:net';
+import { connect, type AddressInfo } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { feedbackServer } from '../src/feedback-api.js';
 import { Store } from '../src/store.js';
 import { Engine } from '../src/engine.js';
@@ -13,14 +14,15 @@ import { DemoProvider } from '../src/providers.js';
 import { seedRepository } from '../src/seed.js';
 
 const feedback = { externalId: 'api-review-1', title: 'CSV export crashes', text: 'An empty customer list crashes when I export CSV.' };
-async function setup(t: TestContext) {
+async function setup(t: TestContext, options: Parameters<typeof feedbackServer>[2] = {}) {
   const root = await mkdtemp(join(tmpdir(), 'auto-iteration-http-'));
   const repo = await seedRepository(root);
   const store = new Store(join(root, 'state.sqlite'));
   const engine = new Engine(store, 'api-demo', repo, new DemoProvider(), root);
   const token = randomBytes(32).toString('hex');
-  const server = feedbackServer(engine, token);
+  const server = feedbackServer(engine, token, options);
   t.after(async () => {
+    server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
     store.close(); await rm(root, { recursive: true, force: true });
   });
@@ -29,7 +31,7 @@ async function setup(t: TestContext) {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const post = (body: unknown) => fetch(`${base}/api/feedback`, { method: 'POST', headers, body: JSON.stringify(body) });
-  return { base, headers, post, engine, store };
+  return { base, headers, post, engine, store, root };
 }
 
 test('HTTP feedback becomes a proposal, then a tested change after separate engineer approval', async t => {
@@ -75,4 +77,51 @@ test('HTTP intake rejects malformed, oversized, and non-JSON submissions', async
   assert.equal((await fetch(`${base}/api/feedback`, { method: 'POST', headers: { ...headers, 'Content-Type': 'text/plain' }, body: '{}' })).status, 415);
   assert.equal((await post({ ...feedback, text: 'x'.repeat(70_000) })).status, 413);
   assert.equal((await post({ ...feedback, text: '' })).status, 400);
+});
+
+test('HTTP body deadline returns 408 and closes a stalled or trickling connection', { timeout: 10_000 }, async t => {
+  const { base, headers, post, store } = await setup(t, { bodyTimeoutMs: 150 });
+  for (const trickle of [false, true]) {
+    const socket = connect(Number(new URL(base).port), '127.0.0.1');
+    t.after(() => socket.destroy());
+    socket.setEncoding('utf8');
+    let response = '';
+    socket.on('data', chunk => { response += chunk; });
+    const closed = once(socket, 'close');
+    await once(socket, 'connect');
+    socket.write([
+      'POST /api/feedback HTTP/1.1', `Host: ${new URL(base).host}`,
+      `Authorization: ${headers.Authorization}`, 'Content-Type: application/json',
+      'Content-Length: 1000', '', '{',
+    ].join('\r\n'));
+    const interval = trickle ? setInterval(() => socket.write(' '), 25) : undefined;
+    const deadline = setTimeout(() => socket.destroy(new Error('Body deadline did not close the connection.')), 2000);
+    try { await closed; }
+    finally { clearInterval(interval); clearTimeout(deadline); }
+    assert.match(response, /^HTTP\/1\.1 408 /);
+    assert.match(response, /Connection: close/i);
+    assert.match(response, /Request body timed out/);
+  }
+  assert.equal(store.list('api-demo').length, 0);
+  assert.equal((await post(feedback)).status, 202);
+});
+
+test('Corrupt stored tasks return 500 on status, artifacts, and previews; missing tasks return 404', async t => {
+  const { base, headers, post, root } = await setup(t, { productUI: true });
+  const { taskId } = await (await post(feedback)).json() as { taskId: string };
+  const db = new DatabaseSync(join(root, 'state.sqlite'));
+  try { db.prepare('UPDATE tasks SET data = ? WHERE id = ?').run('{invalid JSON', taskId); }
+  finally { db.close(); }
+  const logged = t.mock.method(console, 'error', () => {});
+  for (const path of [`/api/tasks/${taskId}`, `/api/tasks/${taskId}/patch`, `/preview/${taskId}/`]) {
+    const response = await fetch(`${base}${path}`, { headers });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: 'Could not process feedback.' });
+  }
+  assert.equal(logged.mock.callCount(), 3);
+  assert.ok(logged.mock.calls.every(call => call.arguments[1] instanceof SyntaxError));
+  const missing = '00000000-0000-0000-0000-000000000000';
+  for (const path of [`/api/tasks/${missing}`, `/api/tasks/${missing}/patch`, `/preview/${missing}/`]) {
+    assert.equal((await fetch(`${base}${path}`, { headers })).status, 404);
+  }
 });

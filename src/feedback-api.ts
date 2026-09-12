@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { Engine } from './engine.js';
-import { DomainError, inputSchema, issueSchema, logSchema, type Task } from './domain.js';
+import { DomainError, TaskNotFoundError, inputSchema, issueSchema, logSchema, type Task } from './domain.js';
 import { CodexProvider } from './providers.js';
 import { serveProduct } from './product-preview.js';
+import { feedbackBatchScenarios } from './demo-feedback.js';
 
 const bodySchema = inputSchema.omit({ source: true }).strict();
 const maxBytes = 64 * 1024;
@@ -18,7 +19,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(body));
 }
-function readJson(req: IncomingMessage): Promise<unknown> {
+function readJson(req: IncomingMessage, timeoutMs: number): Promise<unknown> {
   if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) {
     throw new HttpError(415, 'Send application/json.');
   }
@@ -29,28 +30,43 @@ function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
-    let oversized = false;
-    req.on('data', (chunk: Buffer) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      req.off('data', onData);
+      req.off('end', onEnd);
+      req.off('error', onError);
+      req.off('aborted', onAborted);
+      chunks.length = 0;
+    };
+    const onError = (error: Error) => { cleanup(); reject(error); };
+    const onAborted = () => onError(new HttpError(400, 'Request aborted.'));
+    const onData = (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) {
-        oversized = true; chunks.length = 0;
-        reject(new HttpError(413, 'Request body exceeds 64 KiB.'));
-      } else if (!oversized) chunks.push(chunk);
-    });
-    req.on('end', () => {
-      if (oversized) return;
+        onError(new HttpError(413, 'Request body exceeds 64 KiB.'));
+      } else chunks.push(chunk);
+    };
+    const onEnd = () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
       catch { reject(new HttpError(400, 'Invalid JSON.')); }
-    });
-    req.on('error', reject);
-    req.on('aborted', () => reject(new HttpError(400, 'Request aborted.')));
+      finally { cleanup(); }
+    };
+    // A fixed deadline also bounds clients that keep trickling body bytes.
+    const timer = setTimeout(() => onError(new HttpError(408, 'Request body timed out.')), timeoutMs);
+    timer.unref();
+    req.on('data', onData);
+    req.once('end', onEnd);
+    req.once('error', onError);
+    req.once('aborted', onAborted);
   });
 }
 
 /** Operator controls are opt-in and hosted on a separate loopback origin by demo-live. */
 export function feedbackServer(engine: Engine, token: string, options: { productUI?: boolean; discordConnected?: () => boolean;
-  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string } = {}) {
+  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string; bodyTimeoutMs?: number } = {}) {
   if (token.length < 24) throw new Error('The feedback API token must contain at least 24 characters.');
+  const bodyTimeoutMs = options.bodyTimeoutMs ?? 10_000;
+  if (!Number.isSafeInteger(bodyTimeoutMs) || bodyTimeoutMs <= 0) throw new Error('Body timeout must be a positive integer.');
   const expected = Buffer.from(`Bearer ${token}`);
   const mode = engine.provider instanceof CodexProvider ? 'codex' : 'scripted-demo';
   const conversations = new Set<string>();
@@ -87,12 +103,27 @@ export function feedbackServer(engine: Engine, token: string, options: { product
       }
       if (req.method === 'GET' && path === '/api/tasks' && options.productUI) {
         json(res, 200, { mode, discord: options.discordConnected?.() ?? false, operator: options.operatorUI ?? false,
-          operatorUrl: options.operatorUrl, productUrl: options.productUrl, guidedDemo: options.guidedDemo ?? false,
+          operatorUrl: options.operatorUrl, productUrl: options.productUrl, demoScenarios: options.operatorUI ? feedbackBatchScenarios : undefined, guidedDemo: options.guidedDemo ?? false,
           reviews: engine.store.reviews(engine.organizationId, engine.repo.id),
           complaints: engine.store.complaintCounts(engine.organizationId, engine.repo.id, new Date(Date.now() - 30 * 60_000).toISOString()),
           tasks: engine.store.list(engine.organizationId).filter(task => task.repositoryId === engine.repo.id).map(taskView) }); return;
       }
       const action = /^\/api\/operator\/([a-f0-9-]{36})\/(comment|revise|approve|decline)$/.exec(path);
+      if (req.method === 'POST' && path === '/api/operator/demo-batch' && options.operatorUI) {
+        if (req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Demo batches require the engineer console origin.');
+        const { batchId } = z.object({ batchId: z.string().uuid() }).strict().parse(await readJson(req, bodyTimeoutMs));
+        const scenarios = feedbackBatchScenarios;
+        const taskIds = new Set<string>();
+        for (const [index, scenario] of scenarios.entries()) for (const [person, name] of scenario.names.entries()) {
+          const result = engine.demoReview({ source: `demo-batch:${batchId}`, externalId: `${batchId}:${index}:${person}`,
+            category: scenario.category, title: `[Demo feedback] ${scenario.title}`,
+            text: `Reported by ${name} (sample participant).\n${scenario.text}` }, 'other', true, true);
+          if (result.review.taskId) taskIds.add(result.review.taskId);
+        }
+        json(res, 202, { batchId, feedbackCount: 6, taskIds: [...taskIds], mode,
+          message: mode === 'codex' ? 'Six sample entries grouped into three investigations. Each proposal routes to its selected team.'
+            : 'Scripted rehearsal: six entries queued. Only the CSV fixture can be implemented in this mode; use live Codex for all three scenarios.' }); return;
+      }
       if (req.method === 'POST' && action && options.operatorUI) {
         if (req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Operator actions require the engineer console origin.');
         const id = action[1]!;
@@ -100,7 +131,7 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         if (current.repositoryId !== engine.repo.id) throw new HttpError(404, 'Task not found.');
         if (conversations.has(id)) throw new DomainError('Wait for the conversation reply before changing this plan.');
         const actor = { id: 'local-demo-engineer', organizationId: engine.organizationId, canApprove: true };
-        const body = await readJson(req);
+        const body = await readJson(req, bodyTimeoutMs);
         if (action[2] === 'comment') {
           const { text, receiptId } = z.object({ text: z.string().trim().min(1).max(8000), receiptId: z.string().uuid() }).strict().parse(body);
           const receipt = `web-comment:${id}:${receiptId}`;
@@ -131,35 +162,37 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         json(res, 200, { accepted: true }); return;
       }
       if (req.method === 'POST' && path === '/api/events' && options.productUI) {
-        const event = logSchema.parse(await readJson(req));
+        const event = logSchema.parse(await readJson(req, bodyTimeoutMs));
         engine.store.recordLog(engine.organizationId, engine.repo.id, { ...event, at: new Date().toISOString() });
         json(res, 202, { accepted: true }); return;
       }
       const artifact = /^\/api\/tasks\/([a-f0-9-]{36})\/(patch|tests|review)$/.exec(path);
       if (req.method === 'GET' && artifact && options.productUI) {
-        let task;
-        try { task = engine.get(artifact[1]!); } catch { throw new HttpError(404, 'Task not found.'); }
+        const task = engine.get(artifact[1]!);
         if (task.repositoryId !== engine.repo.id || task.status !== 'changes_ready' || !task.result) throw new HttpError(404, 'No ready artifacts.');
         const file = { patch: task.result.patchPath, tests: task.result.testOutputPath, review: task.result.summaryPath }[artifact[2]!];
         res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
         res.end(await readFile(file!, 'utf8')); return;
       }
       if (req.method === 'POST' && path === '/api/feedback') {
-        const body = await readJson(req);
+        const body = await readJson(req, bodyTimeoutMs);
         if (options.productUI) {
           const parsed = bodySchema.extend({ issue: issueSchema.optional(), reviewer: z.string().trim().min(1).max(80).optional() }).strict().parse(body);
-          if (parsed.issue) {
-            const { issue, reviewer, ...feedback } = parsed;
-            if (options.guidedDemo) {
-              const result = engine.demoReview({ ...feedback, title: `${reviewer ?? 'A user'}: ${feedback.title}`.slice(0, 200),
-                text: `Reported by ${reviewer ?? 'a user'} (self-reported name).\n${feedback.text}`.slice(0, 12000), source: 'demo-http' }, issue, false, mode === 'codex');
-              json(res, result.duplicate ? 200 : 202, { ...result, taskId: result.review.taskId ?? null,
-                status: result.review.disposition, reason: result.review.reason }); return;
-            }
+          const { issue, reviewer, ...feedback } = parsed;
+          if (options.guidedDemo) {
+            const result = engine.demoReview({ ...feedback, title: `${reviewer ?? 'A user'}: ${feedback.title}`.slice(0, 200),
+              text: `Reported by ${reviewer ?? 'a user'} (self-reported name).\n${feedback.text}`.slice(0, 12000), source: 'demo-http' }, issue ?? 'other');
+            json(res, result.duplicate ? 200 : 202, { ...result, taskId: result.review.taskId ?? null,
+              status: result.review.disposition, reason: result.review.reason }); return;
+          }
+          if (issue) {
             const result = engine.report({ ...feedback, source: 'demo-http' }, issue);
             json(res, result.duplicate ? 200 : 202, { taskId: result.task?.id ?? null, status: result.task?.status ?? 'collecting',
               duplicate: result.duplicate, reportCount: result.reportCount, threshold: issue === 'other' ? 1 : 3 }); return;
           }
+          const result = engine.submit({ ...feedback, source: 'demo-http' });
+          json(res, result.duplicate ? 200 : 202, { taskId: result.task.id, status: result.task.status, duplicate: result.duplicate });
+          return;
         }
         const feedback = bodySchema.parse(body);
         const result = engine.submit({ ...feedback, source: 'demo-http' });
@@ -170,8 +203,7 @@ export function feedbackServer(engine: Engine, token: string, options: { product
       }
       const match = /^\/api\/tasks\/([a-f0-9-]{36})$/.exec(path);
       if (req.method === 'GET' && match) {
-        let task;
-        try { task = engine.get(match[1]!); } catch { throw new HttpError(404, 'Task not found.'); }
+        const task = engine.get(match[1]!);
         if (task.repositoryId !== engine.repo.id) throw new HttpError(404, 'Task not found.');
         json(res, 200, taskView(task));
         return;
@@ -179,7 +211,12 @@ export function feedbackServer(engine: Engine, token: string, options: { product
       req.resume(); throw new HttpError(404, 'Route not found.');
     } catch (error) {
       if (res.destroyed || res.headersSent) return;
+      if (!req.complete) {
+        res.setHeader('Connection', 'close');
+        res.once('finish', () => req.socket.destroy());
+      }
       if (error instanceof HttpError) json(res, error.status, { error: error.message });
+      else if (error instanceof TaskNotFoundError) json(res, 404, { error: 'Task not found.' });
       else if (error instanceof z.ZodError) json(res, 400, { error: 'Invalid feedback.', issues: error.issues.map(issue => ({ path: issue.path, message: issue.message })) });
       else if (error instanceof DomainError) json(res, 409, { error: error.message });
       else { console.error('Feedback API error:', error); json(res, 500, { error: 'Could not process feedback.' }); }

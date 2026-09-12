@@ -42,18 +42,31 @@ $('#feedback-form').onsubmit = async event => {
   event.preventDefault();
   const text = $('#feedback-text').value.trim(); const reviewer = $('#reviewer').value.trim();
   if (!text || !reviewer) return;
-  const issue = /csv|export/i.test(text) ? 'csv_export' : 'other';
-  const title = issue === 'csv_export' ? 'CSV export fails' : text.slice(0, 100);
-  const payload = { reviewer, text, title, issue };
+  // The person's selection controls team routing; the agent still investigates the actual issue.
+  const payload = { reviewer, text, title: text.slice(0, 100), category: $('#feedback-category').value };
   if (!pendingSubmission || JSON.stringify(pendingSubmission.payload) !== JSON.stringify(payload)) pendingSubmission = { payload, externalId: crypto.randomUUID() };
   $('#submit-feedback').disabled = true; $('#submit-state').textContent = 'Sending your feedback…';
   try {
     const result = await api('/api/feedback', { ...payload, externalId: pendingSubmission.externalId });
     pendingSubmission = undefined;
-    $('#submit-state').textContent = `Thanks, ${reviewer}. Your feedback has been received. We appreciate you helping us improve Northstar.`;
+    $('#submit-state').textContent = result.status === 'quarantined'
+      ? `Thanks, ${reviewer}. Your feedback was saved for review.`
+      : `Thanks, ${reviewer}. Your feedback has been received. We appreciate you helping us improve Northstar.`;
     $('#feedback-text').value = ''; await refresh();
   } catch (error) { $('#submit-state').textContent = error.message; }
   finally { $('#submit-feedback').disabled = false; }
+};
+let pendingBatch;
+$('#run-demo-batch').onclick = async () => {
+  if (!state?.operator) return;
+  pendingBatch ??= crypto.randomUUID();
+  $('#run-demo-batch').disabled = true;
+  $('#batch-state').textContent = 'Submitting sample feedback…';
+  try {
+    const result = await api('/api/operator/demo-batch', { batchId: pendingBatch });
+    pendingBatch = undefined; $('#batch-state').textContent = result.message; await refresh();
+  } catch (error) { $('#batch-state').textContent = error.message; }
+  finally { $('#run-demo-batch').disabled = false; }
 };
 $('#seed-samples').onclick = async () => {
   $('#seed-samples').disabled = true;
@@ -78,6 +91,7 @@ function taskCard(task) {
   const card = node('article', undefined, 'task'); card.dataset.task = task.taskId;
   card.append(node('div', labels[task.status], `status ${task.status}`), node('h3', task.feedback.title), progress(task));
   if (task.plan) {
+    if (task.plan.classification) card.append(node('p', `${task.plan.classification.kind.replaceAll('_', ' ')} · ${task.plan.classification.issue}`, 'meta'));
     card.append(node('p', task.plan.summary, 'solution'), node('div', `Proposal v${task.plan.version} · ${task.plan.disposition === 'code_change' ? 'Code change' : 'Clarification needed'}`, 'meta'));
     card.append(details('What Codex found in the code', task.plan.evidence), details('Proposed implementation', task.plan.steps), details('How we’ll test it', task.plan.acceptanceCriteria));
   } else card.append(node('p', 'The worker will inspect the repository and available error logs. The proposal will appear here and in Discord when connected.', 'muted'));
@@ -93,7 +107,7 @@ function taskCard(task) {
   if (task.approval) card.append(node('p', `Approved plan v${task.approval.version} · ${new Date(task.approval.at).toLocaleTimeString()}`, 'meta'));
   if (task.status === 'changes_ready') {
     const links = node('div', undefined, 'result-links');
-    links.append(link('Try the fixed export ↗', `${state.productUrl || ''}/preview/${task.taskId}/`, 'submit'));
+    links.append(link('Try the updated product ↗', `${state.productUrl || ''}/preview/${task.taskId}/`, 'submit'));
     links.append(link('View patch', `/api/tasks/${task.taskId}/patch`), link('Test results', `/api/tasks/${task.taskId}/tests`), link('Review summary', `/api/tasks/${task.taskId}/review`));
     card.append(links, node('p', 'Local review bundle. Remote PR publishing is not connected.', 'meta'));
   }
@@ -140,6 +154,14 @@ async function refresh() {
   if (busy) return;
   try {
     state = await api('/api/tasks');
+    if (state.operator && !$('#batch-examples').childElementCount) {
+      const categories = { general: 'General', ui_ux: 'UI/UX issue', performance: 'Performance' };
+      for (const scenario of state.demoScenarios || []) for (const name of scenario.names) {
+        const sample = node('article', undefined, 'review');
+        sample.append(node('small', `SAMPLE · ${categories[scenario.category]}`), node('h4', `${name}: ${scenario.title}`), node('p', scenario.text));
+        $('#batch-examples').append(sample);
+      }
+    }
     $('#mode').textContent = state.mode === 'codex' ? 'LIVE CODEX' : 'SCRIPTED REHEARSAL';
     $('#connection').textContent = state.operator ? 'Local engineer fallback · You are acting as the trusted demo operator.' : state.discord
       ? 'Discord connected. Engineers receive the proposal there and can approve or request changes.'

@@ -1,6 +1,6 @@
 import { DomainError, type Task } from './domain.js';
 import type { Engine } from './engine.js';
-import { formatTask } from './format.js';
+import { formatDiscordTask } from './format.js';
 
 export type DiscordInput = {
   id: string; guildId: string | null; channelId: string; authorId: string;
@@ -8,7 +8,8 @@ export type DiscordInput = {
 };
 export type DiscordConfig = { guildId: string; channelId: string; approverIds: Set<string>; botId: string;
   route?: (task: Task) => string; consoleUrl?: string };
-export type DiscordTransport = { send(text: string, replyTo?: string, controls?: { taskId: string; version: number }): Promise<string[]> };
+export type DiscordControls = { taskId: string; version: number; canApprove: boolean; needsClarification: boolean };
+export type DiscordTransport = { send(text: string, replyTo?: string, controls?: DiscordControls): Promise<string[]> };
 type Command = { kind: 'feedback'; text: string } |
   { kind: 'changes'; version: number; text: string } |
   { kind: 'revise' | 'approve'; version: number } | { kind: 'status' | 'help' | 'decline' };
@@ -41,17 +42,15 @@ export class DiscordController {
   private attached(task: Task) {
     return task.discord?.guildId === this.config.guildId && task.discord.channelId === this.config.channelId;
   }
-  private async post(text: string, task?: Task, replyTo?: string, controls = false) {
-    const ids = await this.transport.send(text, replyTo ?? task?.discord?.messageId,
-      controls && task?.plans.at(-1) ? { taskId: task.id, version: task.plans.at(-1)!.version } : undefined);
+  private async post(text: string, task?: Task, replyTo?: string, showControls = false) {
+    const plan = task?.plans.at(-1);
+    const controls = showControls && task && plan && task.status === 'discussing' && plan.disposition !== 'non_code'
+      ? { taskId: task.id, version: plan.version, needsClarification: plan.disposition === 'needs_clarification',
+          canApprove: plan.disposition === 'code_change' && plan.commentCount === task.comments.length && Date.parse(plan.expiresAt) > Date.now() }
+      : undefined;
+    const ids = await this.transport.send(text, replyTo ?? task?.discord?.messageId, controls);
     if (task) for (const id of ids) this.engine.store.linkDiscordMessage(this.scope, id, task.id);
     return ids;
-  }
-  async announce(task: Task) {
-    if (task.discord) return;
-    const ids = await this.post(`New customer feedback: ${task.feedback.title}\n${task.feedback.text}\n\nTask: ${task.id}\n${this.engine.provider.label}\nI will post a proposal here. Reply to its message to discuss this task.`, task);
-    if (!ids[0]) throw new Error('Discord did not return a message ID.');
-    this.engine.attachDiscord(task.id, { guildId: this.config.guildId, channelId: this.config.channelId, messageId: ids[0] });
   }
   private findTask(message: DiscordInput): Task | undefined {
     if (message.replyTo) {
@@ -75,7 +74,7 @@ export class DiscordController {
     try {
       const command = parseDiscordCommand(message.content, this.config.botId);
       if (command?.kind === 'help') {
-        await this.post(`Submit feedback on the CRM page, or @bot feedback <report>.\nReply to a proposal to discuss it. @bot revise 1 incorporates comments; @bot approve 2 approves exactly v2.\nOther commands: @bot status, @bot decline. Only configured engineers can approve.\n${this.engine.provider.label}`, undefined, message.id);
+        await this.post(`Submit feedback on the Northstar page, or @bot feedback <report>.\nReply to a proposal to discuss it. @bot revise 1 incorporates comments; @bot approve 2 approves exactly v2.\nOther commands: @bot status, @bot decline. Only configured engineers can approve.\n${this.engine.provider.label}`, undefined, message.id);
       } else if (command?.kind === 'feedback') {
         task = this.engine.submit({ source: `discord:${this.scope}`, externalId: message.id,
           title: command.text.slice(0, 180), text: command.text }).task;
@@ -91,7 +90,6 @@ export class DiscordController {
         if (!command) {
           this.engine.comment(task.id, actor, message.content, receipt);
           this.engine.store.linkDiscordMessage(this.scope, message.id, task.id);
-          await this.post('Discussion recorded. Request a revised plan before approving.', task, message.id);
           const taskId = task.id;
           const discussionSnapshot = this.engine.get(taskId);
           const previous = this.conversations.get(taskId) ?? Promise.resolve();
@@ -119,7 +117,9 @@ export class DiscordController {
           }
           if (command.kind === 'approve') this.engine.approve(task.id, actor, command.version);
           if (command.kind === 'decline') this.engine.decline(task.id, actor);
-          await this.post(formatTask(this.engine.get(task.id)), task, message.id);
+          if (command.kind === 'status') await this.post(formatDiscordTask(this.engine.get(task.id), this.config.consoleUrl), task, message.id, true);
+          else if (command.kind === 'approve') await this.post(`Plan v${command.version} approved. Implementation and tests are queued.`, task, message.id);
+          else if (command.kind === 'revise' || command.kind === 'changes') await this.post('Updating the proposal with your feedback. I’ll post the revised plan here.', task, message.id);
         }
       }
       this.engine.store.recordReceipt(receipt);
@@ -130,27 +130,18 @@ export class DiscordController {
   }
   async sync() {
     for (let task of this.tasks().reverse()) {
-      const investigatingKey = `discord-investigating:${this.scope}:${task.id}:${task.plans.length}`;
-      if (['received', 'investigating', 'revising'].includes(task.status) &&
-          (task.discord ? this.attached(task) : (this.config.route?.({ ...task, plans: [] }) ?? this.config.channelId) === this.config.channelId) &&
-          !this.engine.store.hasReceipt(investigatingKey)) {
-        await this.post(`${task.signal ? `${task.signal.reportCount} customer reports in ${task.signal.windowMinutes} minutes. ` : ''}I'm investigating: ${task.feedback.title}\nI'll check the repository and available product logs, then post the evidence and proposed fix in the owning team's channel.`, task);
-        this.engine.store.recordReceipt(investigatingKey);
-      }
-      // HTTP feedback needs an announcement too. Do not mirror Slack conversations.
+      if (task.slackThread || !['discussing', 'changes_ready', 'failed', 'declined'].includes(task.status)) continue;
       const destination = this.config.route?.(task) ?? this.config.channelId;
-      if (!task.discord && !task.slackThread && destination === this.config.channelId &&
-          ['discussing', 'failed'].includes(task.status)) {
-        await this.announce(task);
-        task = this.engine.get(task.id);
-      }
-      if (!this.attached(task) || !['discussing', 'changes_ready', 'failed', 'declined'].includes(task.status)) continue;
+      if (task.discord ? !this.attached(task) : destination !== this.config.channelId) continue;
+      // Keep the existing receipt key so restarting does not replay old proposals.
       const signature = `discord-state:${this.scope}:${task.id}:${task.status}:${task.plans.at(-1)?.version ?? 0}:${task.error ?? ''}`;
       if (this.engine.store.hasReceipt(signature)) continue;
-      const instructions = task.status === 'discussing'
-        ? `\n\nApprove plan v${task.plans.at(-1)?.version} or request changes using the buttons below. You can also reply here to discuss the implementation.`
-        : task.status === 'changes_ready' ? `\n\nInspect the patch, tests, and fixed preview in the engineer console on the demo laptop: ${this.config.consoleUrl ?? 'http://127.0.0.1:4319/'}` : '';
-      await this.post(`${formatTask(task)}${instructions}`, task, undefined, task.status === 'discussing');
+      const prefix = /SCRIPTED/.test(this.engine.provider.label) ? '[Scripted rehearsal]\n' : '';
+      const ids = await this.post(`${prefix}${formatDiscordTask(task, this.config.consoleUrl)}`, task, undefined, true);
+      if (!task.discord) {
+        if (!ids[0]) throw new Error('Discord did not return a message ID.');
+        this.engine.attachDiscord(task.id, { guildId: this.config.guildId, channelId: this.config.channelId, messageId: ids[0] });
+      }
       this.engine.store.recordReceipt(signature);
     }
   }

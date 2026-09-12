@@ -14,11 +14,12 @@ import { Store } from '../src/store.js';
 import { DemoProvider } from '../src/providers.js';
 import { seedRepository } from '../src/seed.js';
 import { DiscordController, parseDiscordCommand, type DiscordInput } from '../src/discord-controller.js';
-import { routeChannel } from '../src/discord.js';
+import { routeChannel, splitDiscordText } from '../src/discord.js';
 import { feedbackServer } from '../src/feedback-api.js';
 import { OpenRouterConversation } from '../src/conversation.js';
 import type { ConversationReply } from '../src/conversation.js';
 import type { Task } from '../src/domain.js';
+import { formatDiscordTask } from '../src/format.js';
 
 const report = { source: 'demo-http', externalId: 'r1', title: 'CSV export crashes', text: 'No customers: CSV export throws.' };
 const lead = { id: 'lead', organizationId: 'team', canApprove: true };
@@ -54,7 +55,7 @@ test('three reports escalate atomically, duplicate deliveries do not inflate the
   assert.equal(later.report({ ...report, externalId: 'later' }, 'csv_export').reportCount, 1);
 });
 
-test('Discord announces investigation, routes the owning team once, and enforces human versioned approval', async t => {
+test('Discord sends one result to the owning team and enforces human versioned approval', async t => {
   class Routed extends DemoProvider {
     override async investigate(...args: Parameters<DemoProvider['investigate']>) {
       return { ...await super.investigate(...args), team: 'performance' as const, routingReason: 'Test routing result.' };
@@ -68,7 +69,7 @@ test('Discord announces investigation, routes the owning team once, and enforces
   const perf = new DiscordController(engine, { ...base, channelId: 'perf' }, perfOut);
   t.after(async () => { await general.stop(); await perf.stop(); });
   const task = engine.submit(report).task;
-  await general.sync(); assert.match(generalOut.sent[0]!.text, /I'm investigating/);
+  await general.sync(); assert.equal(generalOut.sent.length, 0);
   await engine.drain(); await general.sync(); await perf.sync();
   assert.equal(engine.get(task.id).discord?.channelId, 'perf');
   const rootMessage = engine.get(task.id).discord!.messageId;
@@ -208,11 +209,9 @@ test('guided feedback keeps samples and spam visible, starts one investigation, 
   engine.demoReview({ ...report, externalId: 'sample-1' }, 'csv_export', true);
   engine.demoReview({ ...report, externalId: 'sample-2' }, 'csv_export', true);
   assert.equal(engine.pendingJobs().length, 0);
-  const spam = engine.demoReview({ ...report, externalId: 'spam', text: 'Buy followers today' }, 'csv_export');
+  const spam = engine.demoReview({ ...report, externalId: 'spam', text: 'Buy followers today' }, 'csv_export', true);
   assert.equal(spam.review.disposition, 'quarantined');
   assert.equal(engine.pendingJobs().length, 0);
-  const feature = engine.demoReview({ ...report, externalId: 'feature', text: 'Add a dark theme' }, 'other');
-  assert.equal(feature.review.disposition, 'backlog');
   const first = engine.demoReview(report, 'csv_export');
   assert.ok(first.review.taskId);
   assert.equal(engine.get(first.review.taskId!).signal?.reportCount, 3);
@@ -225,10 +224,53 @@ test('guided feedback keeps samples and spam visible, starts one investigation, 
   assert.equal(grouped.review.disposition, 'grouped');
   assert.equal(engine.pendingJobs().length, 1);
   assert.equal(store.reviews('another-team', engine.repo.id).length, 0);
-  const other = engine.demoReview({ ...report, externalId: 'live-other-1', text: 'Search freezes' }, 'other', false, true);
-  const unrelated = engine.demoReview({ ...report, externalId: 'live-other-2', text: 'Add keyboard shortcuts' }, 'other', false, true);
+  const feature = engine.demoReview({ ...report, externalId: 'feature', text: 'Add a dark theme' });
+  assert.equal(feature.review.disposition, 'investigating');
+  assert.ok(feature.review.taskId);
+  const other = engine.demoReview({ ...report, externalId: 'live-other-1', text: 'Search freezes' });
+  const unrelated = engine.demoReview({ ...report, externalId: 'live-other-2', text: 'Add keyboard shortcuts' });
   assert.ok(other.review.taskId);
   assert.notEqual(other.review.taskId, unrelated.review.taskId);
+  const differentExport = engine.demoReview({ ...report, externalId: 'slow-export', text: 'Populated exports take ten seconds.' }, 'csv_export');
+  assert.notEqual(differentExport.review.taskId, first.review.taskId);
+  const spamBug = engine.demoReview({ ...report, externalId: 'spam-handling', text: 'The form accepts buy followers spam; please improve reporting controls.' });
+  assert.equal(spamBug.review.disposition, 'investigating');
+});
+
+test('unclassified feedback reaches the provider and returns classification and team without bypassing approval', async t => {
+  class Arbitrary extends DemoProvider {
+    override async investigate(task: Task) {
+      assert.match(task.feedback.text, /Reported by Maya/);
+      return {
+        classification: { kind: 'usability' as const, issue: 'Feedback form has no keyboard focus indicator' },
+        disposition: 'code_change' as const, team: 'ui_ux' as const, routingReason: 'Keyboard focus is an accessibility concern.',
+        summary: 'Add a visible keyboard focus indicator.', evidence: ['Test provider inspected the submitted report.'],
+        steps: ['Add focus-visible styling.'], acceptanceCriteria: ['Keyboard users can see the focused control.'],
+      };
+    }
+  }
+  const { engine } = await setup(t, new Arbitrary());
+  const server = feedbackServer(engine, 'a'.repeat(32), { productUI: true, guidedDemo: true });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const cookie = (await fetch(base)).headers.get('set-cookie')!.split(';')[0]!;
+  const headers = { Cookie: cookie, 'Content-Type': 'application/json' };
+  const feedback = { externalId: 'keyboard-focus', reviewer: 'Maya', title: 'Invisible keyboard focus', text: 'I cannot see which form control is focused when using Tab.' };
+  const response = await fetch(`${base}/api/feedback`, { method: 'POST', headers, body: JSON.stringify(feedback) });
+  assert.equal(response.status, 202);
+  const accepted = await response.json() as { taskId: string; status: string };
+  assert.equal(accepted.status, 'investigating');
+  await engine.drain();
+  const task = engine.get(accepted.taskId);
+  assert.equal(task.status, 'discussing');
+  assert.equal(task.plans[0]?.classification?.kind, 'usability');
+  assert.equal(routeChannel(task, { engineering: 'core', performance: 'perf', ui_ux: 'design' }), 'design');
+  assert.equal(task.approval, undefined);
+  assert.equal(task.result, undefined);
+  const retry = await fetch(`${base}/api/feedback`, { method: 'POST', headers, body: JSON.stringify(feedback) });
+  assert.equal(retry.status, 200);
+  assert.equal((await retry.json() as { taskId: string }).taskId, task.id);
 });
 
 test('separate operator origin gates versioned approval and completes the feedback-to-preview flow', async t => {
@@ -280,8 +322,12 @@ test('Discord proposal includes approval controls and request changes sends engi
     async send(text, replyTo, buttons) { if (buttons) controls.push(buttons); return out.send(text, replyTo); },
   });
   const task = engine.submit(report).task; await engine.drain(); await controller.sync();
-  assert.deepEqual(controls[0], { taskId: task.id, version: 1 });
-  assert.ok(out.sent.some(item => /Code evidence:/.test(item.text) && /Implementation plan:/.test(item.text)));
+  assert.deepEqual(controls[0], { taskId: task.id, version: 1, canApprove: true, needsClarification: false });
+  assert.equal(out.sent.length, 1);
+  assert.match(out.sent[0]!.text, /Code evidence:/);
+  assert.doesNotMatch(out.sent[0]!.text, /Task:|Expires:|Implementation plan:/);
+  assert.equal(splitDiscordText(out.sent[0]!.text).length, 1);
+  await controller.sync(); assert.equal(out.sent.length, 1);
   await controller.handle(input('change-request', '<@123> changes 1 Keep the headers.'));
   assert.equal(engine.get(task.id).status, 'revising');
   await engine.drain(); await controller.sync();
@@ -293,4 +339,106 @@ test('Discord proposal includes approval controls and request changes sends engi
   await engine.drain();
   assert.equal(engine.get(task.id).status, 'changes_ready');
   await controller.stop();
+});
+
+test('feedback category persists through HTTP and wins over model routing; categories do not merge', async t => {
+  const { engine } = await setup(t);
+  const server = feedbackServer(engine, 'c'.repeat(32), { productUI: true, guidedDemo: true });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const page = await fetch(base);
+  const headers = { Cookie: page.headers.get('set-cookie')!.split(';')[0]!, 'Content-Type': 'application/json' };
+  const routes = { engineering: 'core', ui_ux: 'design', performance: 'perf' };
+  for (const [category, channel] of [['ui_ux', 'design'], ['performance', 'perf'], ['general', 'core']] as const) {
+    const response = await fetch(`${base}/api/feedback`, { method: 'POST', headers, body: JSON.stringify({
+      externalId: `category-${category}`, reviewer: 'Maya', title: report.title, text: report.text, category,
+    }) });
+    assert.equal(response.status, 202);
+    const { taskId } = await response.json() as { taskId: string };
+    assert.equal(engine.get(taskId).feedback.category, category);
+    assert.equal(routeChannel(engine.get(taskId), routes), channel);
+    await engine.drain();
+    // The fixture suggests engineering for every report. Explicit categories still win.
+    assert.equal(routeChannel(engine.get(taskId), routes), channel);
+  }
+  assert.equal(engine.store.list('team').length, 3);
+  assert.equal((await fetch(`${base}/api/feedback`, { method: 'POST', headers, body: JSON.stringify({
+    externalId: 'bad-category', title: report.title, text: report.text, category: 'sales',
+  }) })).status, 400);
+});
+
+test('clarification and non-code results stay concise and never offer approval', async t => {
+  const { engine } = await setup(t);
+  const task = engine.submit(report).task; await engine.drain();
+  engine.store.mutate(task.id, engine.organizationId, { type: 'test.clarification', actor: 'test', at: new Date().toISOString() }, current => {
+    const plan = current.plans[0]!;
+    plan.disposition = 'needs_clarification';
+    plan.summary = 'The reported dropdown could not be located in this checkout.';
+    plan.steps = ['Clarify: Which page and dropdown do you mean?', 'Clarify: What happens when you click it?', 'Investigate once the control is identified.'];
+  });
+  const out = transport();
+  const buttons: any[] = [];
+  const config = { guildId: 'guild', channelId: 'general', botId: '123', approverIds: new Set(['lead']) };
+  const controller = new DiscordController(engine, config, {
+    async send(text, replyTo, controls) { buttons.push(controls); return out.send(text, replyTo); },
+  });
+  await controller.sync(); await controller.sync();
+  assert.equal(out.sent.length, 1);
+  assert.equal(buttons[0].canApprove, false);
+  assert.equal(buttons[0].needsClarification, true);
+  assert.match(out.sent[0]!.text, /Which page and dropdown/);
+  assert.doesNotMatch(out.sent[0]!.text, /Acceptance criteria|Code evidence|Implementation plan|Expires:|Approve plan/);
+  const restarted = new DiscordController(engine, config, out);
+  await restarted.sync(); assert.equal(out.sent.length, 1);
+  engine.store.mutate(task.id, engine.organizationId, { type: 'test.noncode', actor: 'test', at: new Date().toISOString() }, current => {
+    current.plans[0]!.version = 2; current.plans[0]!.disposition = 'non_code';
+  });
+  await controller.sync();
+  assert.equal(buttons[1], undefined);
+  assert.match(out.sent[1]!.text, /No code change proposed/);
+});
+
+test('Discord summaries fit one message and long conversations split on readable boundaries', async t => {
+  const { engine } = await setup(t);
+  const task = engine.submit(report).task; await engine.drain();
+  const current = engine.get(task.id);
+  current.feedback.title = 'Long feedback '.repeat(100);
+  const plan = current.plans[0]!;
+  plan.summary = 'A proposed behavior change. '.repeat(200);
+  plan.evidence = ['export.mjs:2 ' + 'A code observation. '.repeat(200)];
+  plan.acceptanceCriteria = ['Expected behavior. '.repeat(200)];
+  const summary = formatDiscordTask(current, 'http://127.0.0.1:4349/');
+  assert.equal(splitDiscordText(summary).length, 1);
+  assert.ok(summary.length < 1900);
+  const chunks = splitDiscordText(('A complete paragraph of discussion. '.repeat(40) + '\n\n').repeat(4));
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every(chunk => chunk.length <= 1900));
+});
+
+test('preloaded feedback stays idle until Start, then retries queue only three grouped team investigations', async t => {
+  const { engine } = await setup(t);
+  const server = feedbackServer(engine, 'b'.repeat(32), { productUI: true, guidedDemo: true, operatorUI: true });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const page = await fetch(base);
+  const headers = { Cookie: page.headers.get('set-cookie')!.split(';')[0]!, 'Content-Type': 'application/json', Origin: base };
+  const state = await (await fetch(`${base}/api/tasks`, { headers })).json() as { demoScenarios: { names: string[] }[] };
+  assert.equal(state.demoScenarios.flatMap(item => item.names).length, 6);
+  assert.equal(engine.pendingJobs().length, 0);
+  const batchId = randomUUID();
+  const start = () => fetch(`${base}/api/operator/demo-batch`, { method: 'POST', headers, body: JSON.stringify({ batchId }) });
+  const first = await (await start()).json() as { taskIds: string[]; feedbackCount: number };
+  const retry = await (await start()).json() as { taskIds: string[] };
+  assert.equal(first.feedbackCount, 6);
+  assert.equal(first.taskIds.length, 3);
+  assert.deepEqual(retry.taskIds, first.taskIds);
+  assert.equal(engine.pendingJobs().length, 3);
+  const tasks = first.taskIds.map(id => engine.get(id));
+  assert.deepEqual(tasks.map(task => routeChannel(task, { engineering: 'core', ui_ux: 'design', performance: 'perf' })), ['core', 'design', 'perf']);
+  assert.ok(tasks.every(task => task.signal?.reportCount === 2 && task.feedback.title.startsWith('[Demo feedback]')));
+  assert.match(tasks[0]!.feedback.text, /Maya/); assert.match(tasks[0]!.feedback.text, /Alex/);
+  assert.equal(engine.store.reviews('team', engine.repo.id).length, 6);
+  assert.equal((await fetch(`${base}/api/operator/demo-batch`, { method: 'POST', headers: {...headers, Origin:'http://127.0.0.1:1'}, body: JSON.stringify({batchId:randomUUID()}) })).status, 403);
 });

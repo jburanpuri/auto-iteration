@@ -18,17 +18,17 @@ export class Engine {
     const feedback = inputSchema.parse(input);
     return this.store.create(this.newTask(feedback));
   }
-  demoReview(input: unknown, issue: Issue, sample = false, investigateOther = false) {
+  demoReview(input: unknown, issue: Issue = 'other', sample = false, launchSample = false) {
     const feedback = inputSchema.parse(input);
-    // Transparent demo rules, not an AI-authorship detector or production spam classifier.
-    const spam = /guaranteed.{0,20}(profit|income)|buy followers|click here.{0,40}crypto/i.test(`${feedback.title} ${feedback.text}`);
-    const disposition = spam ? 'quarantined' : issue !== 'csv_export' && (!investigateOther || sample) ? 'backlog' : sample ? 'sample' : 'investigating';
+    // Only labeled fixtures use a scripted spam rule. Real reports are classified
+    // by the agent, including reports ABOUT spam that merely quote those phrases.
+    const spam = sample && /guaranteed.{0,20}(profit|income)|buy followers|click here.{0,40}crypto/i.test(`${feedback.title} ${feedback.text}`);
+    const disposition = spam ? 'quarantined' : sample && !launchSample ? 'sample' : 'investigating';
     return this.store.demoReview(this.organizationId, this.repo.id, {
       id: randomUUID(), feedback, issue, sample, at: this.at(), disposition,
-      reason: spam ? 'Promotional spam phrase matched a demo rule; retained for review.' : disposition === 'backlog'
-        ? 'Feature request saved for product review; outside this bug walkthrough.' : sample
+      reason: spam ? 'Promotional spam phrase matched a demo rule; retained for review.' : sample && !launchSample
           ? 'Labeled sample report. Waiting for your submission to start investigation.'
-          : 'One report starts investigation in this demo. Implementation still requires engineer approval.',
+          : 'The agent will classify the feedback, investigate the repository, and suggest the owning team. Implementation requires engineer approval.',
     }, reports => ({ ...this.newTask({ ...feedback, text: reports.map(report =>
       `${report.sample ? '[Sample]' : '[Submitted]'} ${report.feedback.title}\n${report.feedback.text}`).join('\n\n').slice(0, 12000) }),
       signal: { issue, reportCount: reports.length, windowMinutes: 30, reportIds: reports.map(report => report.id) } }));

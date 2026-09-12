@@ -2,6 +2,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { relative, resolve, extname } from 'node:path';
 import type { ServerResponse } from 'node:http';
 import type { Engine } from './engine.js';
+import { TaskNotFoundError } from './domain.js';
 
 /** Static frontend preview only; never execute an agent-generated server on the host. */
 export async function serveProduct(engine: Engine, path: string, res: ServerResponse, trustedRoot?: string): Promise<boolean> {
@@ -11,7 +12,11 @@ export async function serveProduct(engine: Engine, path: string, res: ServerResp
   if (preview) {
     if (trustedRoot) return false;
     let task;
-    try { task = engine.get(preview[1]!); } catch { return false; }
+    try { task = engine.get(preview[1]!); }
+    catch (error) {
+      if (error instanceof TaskNotFoundError) return false;
+      throw error;
+    }
     if (task.repositoryId !== engine.repo.id || task.status !== 'changes_ready' || !task.result) return false;
     root = task.result.workspace;
     asset = preview[2] || 'index.html';

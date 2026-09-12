@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { DomainError, type Audit, type Job, type Task, type FeedbackInput, type Issue, type ProductLog, type DemoReview } from './domain.js';
+import { DomainError, TaskNotFoundError, type Audit, type Job, type Task, type FeedbackInput, type Issue, type ProductLog, type DemoReview } from './domain.js';
 
 /** Single-host MVP storage. Mutations, jobs, and audit records commit together. */
 export class Store {
@@ -55,13 +55,25 @@ export class Store {
         return { review: existing, duplicate: true };
       }
       if (review.disposition === 'investigating') {
-        const linked = reviews.find(item => review.issue === 'csv_export' && item.issue === review.issue && item.taskId &&
+        // An intake category is not an issue identity. In particular, never merge all
+        // unclassified feedback (or every mention of an export) into one task.
+        const reportText = (item: DemoReview) => item.feedback.text.replace(/^Reported by [^\n]*\n/, '').trim().replace(/\s+/g, ' ').toLowerCase();
+        const linked = reviews.find(item => item.sample === review.sample && (!review.sample || item.feedback.source === review.feedback.source) && item.feedback.category === review.feedback.category && reportText(item) === reportText(review) && item.taskId &&
           ['received', 'investigating', 'discussing', 'revising'].includes(this.get(item.taskId, org).status));
         if (linked) {
           review.taskId = linked.taskId; review.disposition = 'grouped';
-          review.reason = 'Grouped with the open CSV-export issue. Original report retained.';
+          review.reason = 'An identical report already has an open investigation. Original report retained.';
+          const task = this.get(linked.taskId!, org);
+          // A synchronous batch finishes collecting evidence before any investigation starts.
+          if (task.status === 'received') {
+            task.feedback.text = `${task.feedback.text}\n\n${review.sample ? '[Sample]' : '[Submitted]'} ${review.feedback.text}`.slice(0, 12000);
+            if (task.signal) { task.signal.reportIds.push(review.id); task.signal.reportCount++; }
+            task.revision++; task.updatedAt = review.at;
+            this.db.prepare('UPDATE tasks SET data=? WHERE id=?').run(JSON.stringify(task), task.id);
+            this.addAudit(task.id, { type: 'feedback.grouped', actor: 'intake', at: review.at });
+          }
         } else {
-          const samples = reviews.filter(item => item.issue === review.issue && item.disposition === 'sample');
+          const samples = reviews.filter(item => item.feedback.category === review.feedback.category && reportText(item) === reportText(review) && item.disposition === 'sample');
           const task = makeTask([...samples, review]);
           this.createInside(task); review.taskId = task.id;
           for (const sample of samples) {
@@ -92,7 +104,7 @@ export class Store {
   }
   get(id: string, organizationId: string): Task {
     const row = this.db.prepare('SELECT data FROM tasks WHERE id=? AND organization_id=?').get(id, organizationId);
-    if (!row) throw new DomainError('Task not found in this organization.');
+    if (!row) throw new TaskNotFoundError('Task not found in this organization.');
     return JSON.parse(String(row.data)) as Task;
   }
   list(organizationId: string): Task[] {

@@ -25,6 +25,7 @@ export class DemoProvider implements EngineeringProvider {
     }
     const keepHeaders = task.comments.some(comment => /header/i.test(comment.text));
     return {
+      classification: { kind: 'bug', issue: 'CSV export crashes for an empty result set' },
       disposition: 'code_change',
       team: 'engineering',
       routingReason: 'A functional CSV-export failure belongs to the engineering team.',
@@ -92,7 +93,16 @@ export class CodexProvider implements EngineeringProvider {
       const thread = client.startThread({ workingDirectory: workspace, sandboxMode: 'read-only',
         approvalPolicy: 'never', networkAccessEnabled: false, webSearchMode: 'disabled', model: this.model });
       const result = await thread.run(`${boundaries}
-Investigate the feedback and propose a concrete fix grounded in code evidence.
+Classify and investigate arbitrary product feedback, then propose a concrete solution grounded in code evidence.
+Set classification.kind to bug, feature_request, usability, performance, question, spam, or other.
+Set classification.issue to a short, specific description of this issue, in your own words.
+Derive classification from the complete feedback and repository, not keywords or a predefined demo scenario.
+For unsolicited promotional spam, use classification.kind spam and disposition non_code. A legitimate
+report about spam handling is not itself spam just because it quotes promotional phrases.
+The CSV example is only one possible issue. Investigate feature requests, performance, accessibility,
+and other problems equally. Do not assume that mentioning an export implies the empty-export bug.
+For requests outside this repository or too vague to act on, classify them and ask specific clarifying
+questions using needs_clarification. Do not fabricate relevant code, logs, or a completed fix.
 Call the orbit_observability query_product_logs MCP tool. Correlate timestamps, error messages,
 and durations with code. Cite the observed event/timestamp in evidence. Never invent logs or
 claim an increase relative to a historical baseline: the demo signal is a fixed count threshold.

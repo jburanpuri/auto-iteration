@@ -1,11 +1,15 @@
 import { z } from 'zod';
 
 export class DomainError extends Error {}
+export class TaskNotFoundError extends DomainError {}
+export const feedbackCategorySchema = z.enum(['ui_ux', 'performance', 'general']);
+export const categoryTeam = { ui_ux: 'ui_ux', performance: 'performance', general: 'engineering' } as const;
 export const inputSchema = z.object({
   externalId: z.string().trim().min(1).max(200),
   source: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(200),
   text: z.string().trim().min(1).max(12_000),
+  category: feedbackCategorySchema.optional(),
 }).strict();
 export type FeedbackInput = z.infer<typeof inputSchema>;
 export type DemoReview = {
@@ -22,6 +26,10 @@ export const logSchema = z.object({
 }).strict();
 export type ProductLog = z.infer<typeof logSchema> & { at: string };
 export const proposalSchema = z.object({
+  classification: z.object({
+    kind: z.enum(['bug', 'feature_request', 'usability', 'performance', 'question', 'spam', 'other']),
+    issue: z.string().min(1).max(200),
+  }).strict(),
   disposition: z.enum(['code_change', 'needs_clarification', 'non_code']),
   team: z.enum(['engineering', 'ui_ux', 'performance']),
   routingReason: z.string().min(1).max(1000),
@@ -35,7 +43,9 @@ export type Status = 'received' | 'investigating' | 'discussing' | 'revising' |
   'approved' | 'implementing' | 'changes_ready' | 'failed' | 'declined';
 export type Actor = { id: string; organizationId: string; canApprove: boolean };
 export type Comment = { author: string; text: string; at: string };
-export type Plan = Proposal & {
+export type Plan = Omit<Proposal, 'classification'> & {
+  // Plans already saved before classification was introduced remain readable.
+  classification?: Proposal['classification'];
   version: number; baseCommit: string; expiresAt: string; commentCount: number;
 };
 export type ChangeResult = {

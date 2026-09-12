@@ -29,6 +29,7 @@
     "discord.js": "14.27.0",
     "dotenv": "17.4.2",
     "inngest": "4.20.0",
+    "playwright": "1.63.0",
     "zod": "4.6.2"
   },
   "devDependencies": {

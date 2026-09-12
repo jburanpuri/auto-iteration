@@ -38,3 +38,9 @@ The Inngest HTTP smoke test establishes that the adapter loads and advertises it
 - A real Codex SDK investigation authenticated with the configured ChatGPT login, inspected the fresh Northstar fixture, reproduced the `Object.keys(rows[0])` error, and returned a structured plan with test criteria. It stopped at discussion and did not implement or publish.
 - The live Discord runtime successfully connected as the configured bot. Discord message formatting and versioned button/controller behavior were tested with a transport fixture; an actual button click in Discord and the OpenRouter live API were not exercised in this verification run.
 - The full implementation/preview browser rehearsal used the explicitly labeled scripted provider. Remote PR publication remains unimplemented.
+
+## Feedback categories and Discord summaries
+
+Type checking and all 35 tests passed. Tests cover HTTP category validation/persistence, all three routing destinations even when the model suggests another team, separation of otherwise identical reports across categories, one message per proposal across repeated syncs/restarts, no approval controls for clarification/non-code results, and bounded message formatting. The configured channel names were verified through read-only Discord API requests: ui-ux-team, performance-team, and core-engineering-team.
+
+Prepared sample batch verification: all 36 tests pass. The six samples remain unsubmitted until Start workflow. Repeating the same batch request preserves the same three task IDs, each containing two reports. Browser checks confirmed a blank public name, three category choices, hidden demo controls on the public page, six visible samples in the separate console, and no browser errors. These verification requests did not send new sample messages to Discord.
