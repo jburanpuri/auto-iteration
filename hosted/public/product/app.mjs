@@ -27,12 +27,7 @@ function renderContacts() {
 if (page === 'product') {
   renderContacts();
   $('#contact-status').onchange = renderContacts;
-  let searchTimer;
-  $('#contact-search').oninput = () => {
-    $('#search-state').textContent = 'Searching…';
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { renderContacts(); $('#search-state').textContent = ''; }, 2000);
-  };
+  $('#contact-search').oninput = renderContacts;
 }
 const feedbackQuery = new URLSearchParams(location.search);
 if (page === 'feedback' && feedbackQuery.has('message')) {

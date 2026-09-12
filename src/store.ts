@@ -98,14 +98,25 @@ export class Store {
     return this.db.prepare('SELECT data FROM review_batches WHERE organization_id=? AND repository_id=? ORDER BY rowid DESC')
       .all(org, repo).map(row => JSON.parse(String(row.data)));
   }
-  queueBatch(org: string, repo: string, id: string): ReviewBatch {
+  queueBatch(org: string, repo: string, id: string, limit = Number.POSITIVE_INFINITY): ReviewBatch {
     return this.tx(() => {
       const batches = this.batches(org, repo);
       const existing = batches.find(batch => batch.id === id);
       if (existing) return existing;
       const reserved = new Set(batches.filter(batch => batch.status !== 'failed').flatMap(batch => batch.reportIds));
+      const available = this.reviews(org, repo).filter(r => !r.taskId && r.disposition !== 'quarantined' && !reserved.has(r.id));
+      // Round-robin categories so a small demo batch still exercises team routing.
+      const categories = [...new Set(available.map(r => r.feedback.category || 'general'))];
+      const queues = categories.map(category => available.filter(r => (r.feedback.category || 'general') === category));
+      const selected: DemoReview[] = [];
+      while (selected.length < limit && queues.some(queue => queue.length)) {
+        for (const queue of queues) {
+          if (selected.length >= limit) break;
+          const review = queue.shift(); if (review) selected.push(review);
+        }
+      }
       const batch: ReviewBatch = { id, at: new Date().toISOString(), status: 'pending', taskIds: [],
-        reportIds: this.reviews(org, repo).filter(r => !r.taskId && r.disposition !== 'quarantined' && !reserved.has(r.id)).map(r => r.id) };
+        reportIds: selected.map(r => r.id) };
       this.db.prepare('INSERT INTO review_batches VALUES (?, ?, ?, ?)').run(id, org, repo, JSON.stringify(batch));
       return batch;
     });

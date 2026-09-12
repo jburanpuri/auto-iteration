@@ -32,7 +32,7 @@ export function cloudBridge(engine: Engine, discordConnected: () => boolean, res
           engine.collect({ source: 'demo-samples', externalId: `sample-${group}-${index}`, title: scenario.title,
             text: `Reported by ${review.name} (sample participant).\n${review.text}`, category: scenario.category }, true);
         }
-        engine.store.queueBatch(engine.organizationId, engine.repo.id, batchId);
+        engine.store.queueBatch(engine.organizationId, engine.repo.id, batchId, 20);
         engine.store.recordReceipt(blob.pathname);
       }
       const tasks = engine.store.list(engine.organizationId).filter(t => t.repositoryId === engine.repo.id).map(t => ({

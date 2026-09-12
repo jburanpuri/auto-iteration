@@ -33,8 +33,26 @@ test('manual summary groups paraphrases, accounts for all reports, retains spam,
   assert.equal(store.reviews('org',repo.id).filter(r=>r.disposition==='quarantined').length,1);
   await engine.drain();assert.equal(engine.get(task.id).status,'discussing');assert.equal(engine.get(task.id).approval,undefined);
   const plan=engine.get(task.id);plan.plans[0]!.confidence={legitimacy:'medium',legitimacyReason:'Relevant reports; identities unverified.',issue:'high',issueReason:'Empty rows access throws in export.mjs.'};
-  const text=formatDiscordTask(plan);assert.match(text,/Non-spam confidence/);assert.match(text,/Issue confidence/);assert.match(text,/2 reports/);
+  plan.plans[0]!.summary='Selecting a contact status leaves mismatched records visible. '.repeat(6)+'Preserve the search query while applying the status predicate.';
+  const text=formatDiscordTask(plan);assert.ok(text.includes(plan.plans[0]!.summary));assert.match(text,/Non-spam confidence/);assert.match(text,/Issue confidence/);assert.match(text,/2 reports/);
   const reports=store.reviews('org',repo.id);
   assert.throws(()=>validateGrouping({groups:[]},reports),/omitted/);
   assert.throws(()=>validateGrouping({groups:[{title:'Bad',summary:'Bad',spam:false,reason:'Bad',category:'ui_ux',reportIds:[reports[0]!.id]}]},reports),/category/);
+});
+
+
+test('limited batches select 20 across categories, preserve the inbox, and never reselect reserved reports', async t => {
+  const root=await mkdtemp(join(tmpdir(),'northstar-limit-'));const store=new Store(join(root,'db.sqlite'));
+  t.after(async()=>{store.close();await rm(root,{recursive:true,force:true});});
+  for (const category of ['general','ui_ux','performance'] as const) for(let i=0;i<40;i++) {
+    store.collectReview('org','repo',{id:`${category}-${i}`,feedback:{source:'test',externalId:`${category}-${i}`,title:'Feedback',text:`Report ${i}`,category},issue:'other',sample:true,at:new Date().toISOString(),disposition:'sample',reason:'Ready'});
+  }
+  const first=store.queueBatch('org','repo','one',20);
+  assert.equal(first.reportIds.length,20);
+  const counts=['general','ui_ux','performance'].map(c=>first.reportIds.filter(id=>id.startsWith(c)).length);
+  assert.deepEqual(counts.sort(),[6,7,7]);
+  assert.deepEqual(store.queueBatch('org','repo','one',20),first);
+  const next=store.queueBatch('org','repo','two',20);assert.equal(next.reportIds.length,20);
+  assert.equal(next.reportIds.some(id=>first.reportIds.includes(id)),false);
+  assert.equal(store.reviews('org','repo').length,120);
 });

@@ -55,3 +55,5 @@ Automatic publication is enabled by `AUTO_PUBLISH=1` in the hosted startup comma
 Use **Reset demo** on Reviews (POST `/api/workflow/reset`, demo session required on Vercel). Wait for the completion message. This restores all three intentional bugs, republishes the baseline, archives the old workflow locally, and deletes only this app bot’s messages from the three configured engineering channels. Other members’ messages and the channels remain. Delivery receipts survive so old requests cannot restart the cleared demo. Reset is blocked while an investigation, discussion, or implementation is running. Archives are under `.local/northstar-company-demo/archives/`.
 
 For the shortest demo: Reset → Product: search `nobody`, then export fails → Feedback report → Discord proposal → Approve → tested fix goes live. A separate manual summary step is only needed for bulk reviews.
+
+Bulk demo runs process up to 20 unprocessed reviews per click, balanced across categories. All 120 remain visible. Repeated runs select the next unprocessed set; reset makes the full inbox available again.

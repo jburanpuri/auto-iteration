@@ -399,7 +399,7 @@ test('clarification and non-code results stay concise and never offer approval',
   assert.match(out.sent[1]!.text, /No code change proposed/);
 });
 
-test('Discord summaries fit one message and long conversations split on readable boundaries', async t => {
+test('Discord preserves complete proposal fields and splits long messages on readable boundaries', async t => {
   const { engine } = await setup(t);
   const task = engine.submit(report).task; await engine.drain();
   const current = engine.get(task.id);
@@ -409,8 +409,12 @@ test('Discord summaries fit one message and long conversations split on readable
   plan.evidence = ['export.mjs:2 ' + 'A code observation. '.repeat(200)];
   plan.acceptanceCriteria = ['Expected behavior. '.repeat(200)];
   const summary = formatDiscordTask(current, 'http://127.0.0.1:4349/');
-  assert.equal(splitDiscordText(summary).length, 1);
-  assert.ok(summary.length < 1900);
+  assert.ok(summary.includes(plan.summary));
+  assert.ok(summary.includes(plan.evidence[0]!));
+  assert.ok(summary.includes(plan.acceptanceCriteria[0]!));
+  const proposalChunks=splitDiscordText(summary);
+  assert.ok(proposalChunks.every(chunk=>chunk.length<=1900));
+  assert.equal(proposalChunks.join(' ').replace(/\s+/g,' ').trim(),summary.replace(/\s+/g,' ').trim());
   const chunks = splitDiscordText(('A complete paragraph of discussion. '.repeat(40) + '\n\n').repeat(4));
   assert.ok(chunks.length > 1);
   assert.ok(chunks.every(chunk => chunk.length <= 1900));

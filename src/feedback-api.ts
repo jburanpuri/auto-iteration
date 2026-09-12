@@ -125,7 +125,7 @@ export function feedbackServer(engine: Engine, token: string, options: { product
           engine.collect({ source: 'demo-samples', externalId: `sample-${group}-${index}`, title: scenario.title,
             text: `Reported by ${review.name} (sample participant).\n${review.text}`, category: scenario.category }, true);
         }
-        const batch = engine.store.queueBatch(engine.organizationId, engine.repo.id, batchId);
+        const batch = engine.store.queueBatch(engine.organizationId, engine.repo.id, batchId, 20);
         json(res, 202, batch); return;
       }
       const action = /^\/api\/operator\/([a-f0-9-]{36})\/(comment|revise|approve|decline)$/.exec(path);
