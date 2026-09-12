@@ -63,10 +63,14 @@ async function refresh() {
   if(state.hosted&&!state.workerOnline)$('#notice').textContent='The engineering worker is offline. Feedback and workflow requests are saved until it reconnects.';
   if(pendingReset&&state.reset?.id===pendingReset&&state.reset.status!=='running'){pendingReset=undefined;resetQueued=false;}
   const resetting=resetQueued||state.reset?.status==='running';
-  if(state.reset && (resetting||state.reset.status==='failed'))$('#notice').textContent=state.reset.message;
+  if(resetQueued&&state.reset?.id!==pendingReset)$('#notice').textContent='Reset queued. The product and Discord will be reset shortly…';
+  else if(state.reset && (resetting||state.reset.status==='failed'))$('#notice').textContent=state.reset.message;
   else if(state.reset?.status==='complete'&&!state.batches?.length&&!state.tasks?.length)$('#notice').textContent=state.reset.message;
   $('#start').disabled=busy||resetting;
   $('#reset').disabled=busy||resetting;
+  $('#reset').textContent=resetting?'Resetting demo…':'Reset demo';
+  $('#notice').dataset.state=resetting?'running':state.reset?.status==='complete'&&!state.batches?.length&&!state.tasks?.length?'complete':'';
+  $('#reset').setAttribute('aria-busy',String(resetting));
   $('#start').replaceChildren(node('span',busy?'Starting…':'Summarize & start workflow'),node('span','↗'));
   if(!busy&&!$('#notice').textContent)$('#notice').textContent=state.mode==='scripted-demo'?'Scripted rehearsal. Switch to live Codex to investigate all three issues.':!state.discord?'Discord is disconnected. Summaries will appear here; team delivery requires the bot connection.':'';
  }catch(error){$('#notice').textContent=error.message;$('#notice').classList.add('error');}
@@ -85,10 +89,12 @@ $('#reset').onclick=async()=>{
  if(busy)return;
  if(!window.confirm('Reset this demo? This restores the product bugs, archives the current run, and removes this bot’s messages from the three demo engineering channels.'))return;
  busy=true;$('#reset').disabled=true;$('#start').disabled=true;pendingReset??=crypto.randomUUID();
+ $('#reset').textContent='Resetting demo…';$('#notice').dataset.state='running';$('#notice').textContent='Preparing demo reset…';$('#notice').scrollIntoView({behavior:'smooth',block:'center'});
  try {
   if(state.hosted&&!state.canStart){const code=window.prompt('Enter your demo access code.');if(!code)throw new Error('Reset cancelled.');await api('/api/session',{code});}
   await api('/api/workflow/reset',{resetId:pendingReset});resetQueued=true;$('#notice').textContent='Reset queued. Restoring the demo and clearing its bot messages…';
  }catch(error){$('#notice').textContent=error.message;}
  finally{busy=false;await refresh();}
 };
-void refresh();setInterval(()=>{if(!document.hidden&&!busy)void refresh();},10000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy)void refresh();});
+void refresh();setInterval(()=>{if(!document.hidden&&!busy)void refresh();},3000);

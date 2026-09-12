@@ -75,7 +75,7 @@ export async function resetDemo(engine:Engine,id:string,options:{publish?:boolea
     const deleted=await (options.clearMessages??clearDemoMessages)(archive);
     engine.store.clearDemo(engine.organizationId,engine.repo.id);
     engine.store.recordReceipt(`reset-complete:${id}`);
-    await set('complete','Demo reset. The bugs are back and all 120 sample reviews are ready for a new workflow.',deleted);
+    await set('complete','Reset complete. The red button and original bugs are restored, Discord is cleared, and 120 reviews are ready. Refresh Product to see the reset.',deleted);
     return engine.resetState;
   } catch(error) {
     // Before publication is attempted, restore the previously clean checkout on a failed reset.
