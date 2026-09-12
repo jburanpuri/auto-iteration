@@ -1,5 +1,12 @@
 # Auto Iteration
 
+Auto Iteration turns customer feedback into tested product improvements, with engineers in control. It groups related reports, assesses relevance and code evidence, and uses the Codex SDK to propose a fix in the right Discord channel. Engineers can discuss the plan, request changes, approve, or decline. Once approved, Codex implements the change and runs tests, and the worker publishes the verified fix to Vercel.
+
+Current hosted demo: **https://northstar-auto-iteration.vercel.app**. Product, Feedback, and Reviews are separate navbar pages. Individual feedback triggers investigation; a manual workflow groups the bulk review inbox, investigates code, and posts concise technical proposals with evidence-based confidence to Discord. Approved fixes are tested and published directly to this Vercel demo by the local worker. No PR is created. See [current test routes and runtime notes](docs/TEST_ROUTES.md).
+
+Run `npm run demo:hosted` on the laptop that holds the Codex login. The worker uses **GPT-6 Astra with low reasoning**. Vercel stores queued submissions while the worker is offline.
+
+
 Turn customer feedback into an engineering discussion, an approved solution, and a tested code change for review.
 
 **Current demo:** one Northstar feedback page → one submission → Codex investigation → Discord proposal with **Approve** and **Request changes** buttons → tested local fix and preview. No revenue dashboard or unrelated company list.
@@ -30,7 +37,7 @@ Optional **Behind the scenes** samples show two related export reports, a featur
 
 The demo stores its state and isolated repository in `.local/northstar-company-demo`. For a fresh presentation, set `DEMO_DATA_DIR` to a new directory; existing runs are preserved. Set `FEEDBACK_PORT` and `DEMO_OPERATOR_PORT` if the default ports are occupied.
 
-**Output is currently a local patch, test log, review summary, and fixed preview. Remote PR publishing remains unimplemented.**
+**Standard local mode creates a patch, test log, review summary, and preview. Hosted mode additionally publishes approved, tested static demo fixes to Vercel. Remote PR publishing is not used.**
 
 Read [the project plan](docs/PROJECT_PLAN.md) for architecture and [the integration guide](docs/INTEGRATIONS.md) for optional services.
 

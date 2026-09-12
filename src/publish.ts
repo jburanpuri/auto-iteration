@@ -15,8 +15,23 @@ export async function publishApproved(repo: Repository, task: Task, root: string
   if((await command(repo.path,'git',['status','--porcelain'])).trim())throw new DomainError('The local product has uncommitted edits. Publication paused.');
   const files=(await command(task.result.workspace,'git',['diff','--cached','--name-only'])).trim().split('\n');
   // Only this small static product is eligible for automatic production publication.
-  if(files.some(file=>!['index.html','app.mjs','styles.css','export.mjs'].includes(file)&&!/^[-\w]+\.test\.mjs$/.test(file)))throw new DomainError('The patch includes files outside the static demo release scope.');
+  if(files.some(file=>!['index.html','product.html','app.mjs','styles.css','export.mjs'].includes(file)&&!/^[-\w]+\.test\.mjs$/.test(file)))throw new DomainError('The patch includes files outside the static demo release scope.');
   await command(task.result.workspace, repo.testCommand[0]!, repo.testCommand.slice(1));
+  const finish = async (liveUrl: string, record: unknown) => {
+    await command(repo.path,'git',['apply','--index',task.result!.patchPath]);
+    await command(repo.path,'git',['-c','user.name=Northstar release','-c','user.email=demo@example.test','-c','commit.gpgsign=false','commit','-m',`Apply approved fix ${task.id}`]);
+    if(!deployment)await writeFile(resolve('hosted/public/release.json'),JSON.stringify(record,null,2));
+    return `${liveUrl}/product/`;
+  };
+  const patchHash=createHash('sha256').update(await readFile(task.result.patchPath)).digest('hex');
+  const testHash=createHash('sha256').update(await readFile(task.result.testOutputPath)).digest('hex');
+  // Reconcile an already-live release after a transient verification failure without redeploying it.
+  if(!deployment && process.env.PUBLIC_DEMO_URL) {
+    const response=await fetch(`${process.env.PUBLIC_DEMO_URL}/release.json?task=${task.id}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    if(response.ok) {const previous=await response.json() as {taskId?:string;proposalVersion?:number;patchSha256?:string;testsSha256?:string};
+      if(previous.taskId===task.id && previous.proposalVersion===latestPlan(task).version && previous.patchSha256===patchHash && previous.testsSha256===testHash)return finish(process.env.PUBLIC_DEMO_URL,previous);
+    }
+  }
   const staging=await mkdtemp(join(root,'release-'));
   for(const file of ['package.json','vercel.json'])await cp(resolve('hosted',file),join(staging,file));
   await cp(resolve('hosted/api'),join(staging,'api'),{recursive:true});
@@ -40,11 +55,16 @@ export async function publishApproved(repo: Repository, task: Task, root: string
   const liveUrl=process.env.PUBLIC_DEMO_URL || url;
   if(deployment)await deployment.verify(liveUrl,task.id);
   else {
-    const response=await fetch(`${liveUrl}/release.json?task=${task.id}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
-    if(!response.ok || (await response.json() as {taskId?:string}).taskId!==task.id)throw new DomainError('Deployment completed but the live release record could not be verified.');
+    let verified=false;
+    for(let attempt=0;attempt<8;attempt++) {
+      try {const response=await fetch(`${liveUrl}/release.json?task=${task.id}&check=${attempt}`,{cache:'no-store',signal:AbortSignal.timeout(10000)});
+        if(response.ok) {const live=await response.json() as typeof record;verified=live.taskId===task.id&&live.patchSha256===record.patchSha256&&live.testsSha256===record.testsSha256;}}
+      catch { /* A just-promoted alias can briefly be unavailable. */ }
+      if(verified)break;
+      await new Promise(resolve=>setTimeout(resolve,3000));
+    }
+    if(!verified)throw new DomainError('Deployment completed but the live release record could not be verified.');
   }
-  // Advance the investigated base so later fixes build on the published version.
-  await command(repo.path,'git',['apply','--index',task.result.patchPath]);
-  await command(repo.path,'git',['-c','user.name=Northstar release','-c','user.email=demo@example.test','-c','commit.gpgsign=false','commit','-m',`Apply approved fix ${task.id}`]);
-  return `${process.env.PUBLIC_DEMO_URL || url}/product/`;
+  // Advance the local source only after verifying the exact release at the production URL.
+  return finish(liveUrl,record);
 }

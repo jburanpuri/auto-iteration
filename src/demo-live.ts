@@ -1,3 +1,5 @@
+import { resetDemo } from './reset-demo.js';
+import { writeCloud } from './cloud-storage.js';
 import { config } from 'dotenv';
 import { cloudBridge } from './cloud-bridge.js';
 import { publishApproved } from './publish.js';
@@ -24,12 +26,15 @@ async function main() {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
   const { store, engine } = runtime();
   if(process.env.AUTO_PUBLISH === '1')engine.publish = task => publishApproved(engine.repo, task, root);
+  try {engine.resetState=JSON.parse(await readFile(resolve(root,'reset-state.json'),'utf8'));}catch{}
+  let resetActive:Promise<unknown>|undefined;
+  const reset=(id:string)=> {resetActive=resetDemo(engine,id,{publish:process.env.HOSTED_DEMO==='1',notify:process.env.HOSTED_DEMO==='1'?state=>writeCloud('state/reset.json',{...state,archive:undefined}):undefined}).catch(async(error)=>{if(engine.resetState?.id!==id||engine.resetState.status!=='failed'){engine.resetState={id,status:'failed',at:new Date().toISOString(),message:error.message};if(process.env.HOSTED_DEMO==='1')await writeCloud('state/reset.json',engine.resetState);}throw error;}).finally(()=>{resetActive=undefined;});return resetActive;};
   let discordStop: (() => Promise<void>) | undefined;
   const server = feedbackServer(engine, (await readFile(tokenPath, 'utf8')).trim(), {
-    productUI: true, guidedDemo: true, collectOnly: true, discordConnected: () => !!discordStop, operatorUrl: `http://127.0.0.1:${operatorPort}`,
+    productUI: true, guidedDemo: true, collectOnly: false, discordConnected: () => !!discordStop, operatorUrl: `http://127.0.0.1:${operatorPort}`,
   });
   const operator = feedbackServer(engine, randomBytes(32).toString('hex'), {
-    productUI: true, guidedDemo: true, operatorUI: true, productUrl: `http://127.0.0.1:${port}`,
+    productUI: true, guidedDemo: true, operatorUI: true, reset, productUrl: `http://127.0.0.1:${port}`,
     discordConnected: () => !!discordStop,
   });
   try {
@@ -38,7 +43,7 @@ async function main() {
     operator.listen(operatorPort, '127.0.0.1'); await once(operator, 'listening');
     if (useDiscord) discordStop = await startDiscord(engine, false);
   } catch (error) { server.close(); operator.close(); store.close(); throw error; }
-  const syncCloud = process.env.HOSTED_DEMO === '1' ? cloudBridge(engine, () => !!discordStop) : undefined;
+  const syncCloud = process.env.HOSTED_DEMO === '1' ? cloudBridge(engine, () => !!discordStop, reset) : undefined;
   const cloudTimer = syncCloud ? setInterval(() => { void syncCloud().catch(error=>console.error('Cloud inbox:',error.message)); }, 15000) : undefined;
   if(syncCloud)await syncCloud();
   let active: Promise<void> | undefined;
@@ -51,7 +56,7 @@ async function main() {
     if (stopping) return; stopping = true; clearInterval(timer); clearInterval(cloudTimer);
     await new Promise<void>(resolve => server.close(() => resolve()));
     await new Promise<void>(resolve => operator.close(() => resolve()));
-    await active; await discordStop?.(); store.close();
+    await active; await resetActive; await discordStop?.(); store.close();
   };
   process.once('SIGINT', () => { void stop(); });
   process.once('SIGTERM', () => { void stop(); });

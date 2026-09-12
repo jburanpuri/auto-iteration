@@ -129,6 +129,21 @@ export class Store {
       batch.status = 'ready'; this.saveBatch(org, repo, batch); return batch;
     });
   }
+  archiveDemo(org:string,repo:string) {
+    const tasks=this.list(org).filter(t=>t.repositoryId===repo);
+    return {tasks,reviews:this.reviews(org,repo),batches:this.batches(org,repo),audit:tasks.map(t=>({taskId:t.id,events:this.audit(t.id,org)})),
+      logs:this.logs(org,repo,'1970-01-01T00:00:00.000Z')};
+  }
+  clearDemo(org:string,repo:string) {
+    return this.tx(()=>{
+      for(const task of this.list(org).filter(t=>t.repositoryId===repo)) {
+        for(const table of ['jobs','audit','discord_messages'])this.db.prepare(`DELETE FROM ${table} WHERE task_id=?`).run(task.id);
+        this.db.prepare('DELETE FROM tasks WHERE id=? AND organization_id=?').run(task.id,org);
+      }
+      for(const table of ['demo_reviews','review_batches','product_logs','complaints'])this.db.prepare(`DELETE FROM ${table} WHERE organization_id=? AND repository_id=?`).run(org,repo);
+      // Delivery receipts intentionally survive: old webhook/blob deliveries must not reappear after a reset.
+    });
+  }
   hasReceipt(id: string): boolean { return !!this.db.prepare('SELECT id FROM receipts WHERE id=?').get(id); }
   recordReceipt(id: string) { this.db.prepare('INSERT OR IGNORE INTO receipts VALUES (?)').run(id); }
   linkDiscordMessage(scope: string, messageId: string, taskId: string) {

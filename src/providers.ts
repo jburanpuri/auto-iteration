@@ -112,9 +112,9 @@ Reports: ${JSON.stringify(reviews.map(r => ({ id: r.id, category: r.feedback.cat
       const thread = client.startThread({ workingDirectory: workspace, sandboxMode: 'read-only',
         approvalPolicy: 'never', networkAccessEnabled: false, webSearchMode: 'disabled', model: this.model, modelReasoningEffort: this.reasoning });
       const result = await thread.run(`${boundaries}
-Include confidence with legitimacy (low/medium/high/sample), legitimacyReason, issue (low/medium/high), and issueReason.
+Include confidence with legitimacy (low/medium/high), legitimacyReason, issue (low/medium/high), and issueReason.
 Legitimacy means likelihood of relevant non-spam feedback, NOT verified identity or AI authorship. Never claim AI-text detection.
-If all evidence is labeled sample data, legitimacy must be sample. Repetition of authored samples does not increase confidence.
+Assess non-spam relevance from the actual content: concrete product behavior, reproduction details, unsolicited promotion, malicious links, and relevance to the product. Apply the same content assessment to authored samples and submitted feedback. Sample origin is provenance, not a spam score. Do not infer verified identity or real-world prevalence from samples. Repeated or synthetic reports do not increase confidence.
 Issue confidence must follow evidence: high for a demonstrated defect or directly traced failure; medium for a supported usability concern or incomplete reproduction; low for unsupported claims. Cite the basis and uncertainty. These are qualitative judgments, not calibrated probabilities.
 Classify and investigate arbitrary product feedback, then propose a concrete solution grounded in code evidence.
 Set classification.kind to bug, feature_request, usability, performance, question, spam, or other.

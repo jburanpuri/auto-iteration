@@ -1,5 +1,23 @@
 # Verification record
 
+## Current hosted workflow — September 12, 2026
+
+- Real Codex SDK investigation, one engineer-requested revision, v2 approval, implementation, six passing product regression tests, and actual Vercel publication completed for task `e30174d7-2f46-46b0-8abc-281ea2fe361a`.
+- Model: `gpt-6-astra`, reasoning `low`. Implementation thread: `01a0971e-6ff5-7db3-9798-2af41174b39f`.
+- Verified an actual downloaded `contacts.csv` containing `name,email` after the empty-export fix, and the bot's real “Fix is live” Discord message `1548417373281714279`.
+- Revision and approval used authenticated local engineer controls because native Discord UI automation was unavailable. Actual Discord delivery was verified through Discord REST; this does not claim a live Discord button click test. Discord interaction handlers are covered by integration tests.
+- `npm run check` passes; all 39 application integration tests pass, including reset archiving, delivery receipts, tenant scoping, and publication checks. Tests require permission to listen on localhost.
+- Public feedback queues automatically for investigation. Bulk reviews start manually. The laptop worker must remain running for Codex, Discord, and publishing.
+- Vercel alias propagation initially delayed release verification; bounded retries and hash-checked reconciliation handle that without repeating implementation.
+
+- Reset `edeb97de-134e-4e6b-ab7d-347969264a67` published successfully. It archived the prior workflow, removed 13 messages belonging to this bot, and restored a clean inbox with 120 authored reviews and zero active tasks. Discord REST confirmed all three demo channels were empty afterward.
+- Live browser verification reproduced the three independent baseline bugs: status selection leaves Active contacts in Trial results; search still showed all six contacts after 100 ms and updated after the two-second timer; exporting zero results showed the intended error. There were no uncaught browser errors. Raw CSV is no longer printed in the UI.
+- Product / Feedback / Reviews navigation and Reviews start/reset buttons verified live. No new workflow was started after reset, leaving the demo ready to present.
+- Non-spam confidence now uses content relevance assessment for both authored and submitted reports; no hardcoded sample-confidence override. Provenance remains recorded separately, and no real-user identity or AI-authorship claim is made.
+
+## Earlier local verification (historical)
+
+
 Validated locally on 2026-09-12 using Node.js 22.20.0.
 
 | Check | Result |

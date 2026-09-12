@@ -8,17 +8,17 @@ const scenarios = [
     'The export breaks when my list has zero contacts. Could it download an empty CSV instead of showing an error?',
     'An empty contact list should still export. Right now I get an error rather than a file with the name and email columns.',
   ] },
-  { category: 'ui_ux' as const, title: 'Feedback confirmation is easy to miss', variants: [
-    'I sent feedback but almost missed the small thank-you text below the button. A clear confirmation panel would be reassuring.',
-    'After submitting, I could not immediately tell whether my feedback was received. Please make the success message more visible.',
-    'The thank-you message is easy to overlook. I would like a distinct confirmation after sending, with a way to submit more feedback.',
-    'I nearly submitted the same feedback twice because the confirmation was so subtle. A more prominent success state would help.',
+  { category: 'ui_ux' as const, title: 'Contact status filter does not apply', variants: [
+    'On the Contacts page, selecting Trial still shows Active contacts. The status filter should narrow the list.',
+    'I selected Active in the contact status dropdown, but Trial contacts stayed in the results.',
+    'The status selector changes its label but the list stays the same. Please filter contacts by the selected status.',
+    'Searching by name works eventually, but selecting Trial does not narrow those search results by status.',
   ] },
-  { category: 'performance' as const, title: 'Unnecessary requests on the feedback page', variants: [
-    'The public feedback page keeps fetching the full engineering task list while idle. It should only load data that this page uses.',
-    'I noticed repeated task-list requests on the customer page, although no tasks are displayed. Can those background requests stop?',
-    'The feedback page polls engineering data every few seconds while I am just writing. Please keep that polling in the engineer view.',
-    'There are unnecessary task-list requests while the public page is open. Keep the team dashboard live, but spare the customer page.',
+  { category: 'performance' as const, title: 'Contact search is unnecessarily slow', variants: [
+    'Searching for Ada on the Contacts page takes about two seconds even though there are only six contacts.',
+    'Every time I type a name, Searching stays on screen for two seconds. This small list should update immediately.',
+    'Contact search feels delayed on every keystroke. Clearing the search takes just as long to show everyone again.',
+    'The contacts are already visible, but filtering by name waits two seconds after I stop typing. Please make search responsive.',
   ] },
 ];
 export const feedbackBatchScenarios = scenarios.map((scenario, group) => {

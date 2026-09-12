@@ -63,7 +63,7 @@ function readJson(req: IncomingMessage, timeoutMs: number): Promise<unknown> {
 
 /** Operator controls are opt-in and hosted on a separate loopback origin by demo-live. */
 export function feedbackServer(engine: Engine, token: string, options: { productUI?: boolean; discordConnected?: () => boolean;
-  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string; bodyTimeoutMs?: number; collectOnly?: boolean } = {}) {
+  guidedDemo?: boolean; operatorUI?: boolean; operatorUrl?: string; productUrl?: string; bodyTimeoutMs?: number; collectOnly?: boolean; reset?: (id:string)=>Promise<unknown> } = {}) {
   if (token.length < 24) throw new Error('The feedback API token must contain at least 24 characters.');
   const bodyTimeoutMs = options.bodyTimeoutMs ?? 10_000;
   if (!Number.isSafeInteger(bodyTimeoutMs) || bodyTimeoutMs <= 0) throw new Error('Body timeout must be a positive integer.');
@@ -84,12 +84,12 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         if (options.operatorUI && req.headers.host?.split(':')[1] !== String(req.socket.localPort)) throw new HttpError(403, 'Invalid operator origin.');
         if (req.headers.origin && req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Cross-origin requests are not accepted.');
         if (req.headers['sec-fetch-site'] === 'cross-site') throw new HttpError(403, 'Cross-site requests are not accepted.');
-        if (req.method === 'GET' && (path === '/' || (options.operatorUI && path === '/engineering/') || /^\/preview\/[a-f0-9-]{36}\/$/.test(path))) {
+        if (req.method === 'GET' && (['/', '/reviews/', '/feedback/', '/product/'].includes(path) || (options.operatorUI && path === '/engineering/') || /^\/preview\/[a-f0-9-]{36}\/$/.test(path))) {
           res.setHeader('Set-Cookie', `${cookieName}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/`);
         }
         if (req.method === 'GET' && !path.startsWith('/api/') && path !== '/health') {
           const engineeringPage = options.operatorUI && path.startsWith('/engineering/');
-          const assetPath = engineeringPage ? path.slice('/engineering'.length) : path;
+          const assetPath = engineeringPage ? path.slice('/engineering'.length) : options.operatorUI && path.startsWith('/reviews/') ? path.slice('/reviews'.length) : !options.operatorUI && path.startsWith('/feedback/') ? (path.slice('/feedback'.length) || '/') : !options.operatorUI && path.startsWith('/product/') ? (path === '/product/' ? '/product.html' : path.slice('/product'.length)) : path;
           const trustedRoot = options.operatorUI ? fileURLToPath(new URL(engineeringPage ? '../examples/mini-crm/' : '../examples/reviews/', import.meta.url)) : undefined;
           if (await serveProduct(engine, assetPath, res, trustedRoot)) return;
           throw new HttpError(404, 'Product file or ready preview not found.');
@@ -105,11 +105,18 @@ export function feedbackServer(engine: Engine, token: string, options: { product
         req.resume(); throw new HttpError(401, 'A valid intake bearer token is required.');
       }
       if (req.method === 'GET' && path === '/api/tasks' && options.productUI) {
-        json(res, 200, { mode, discord: options.discordConnected?.() ?? false, operator: options.operatorUI ?? false,
+        json(res, 200, { reset:engine.resetState, mode, discord: options.discordConnected?.() ?? false, operator: options.operatorUI ?? false,
           operatorUrl: options.operatorUrl, productUrl: options.productUrl, demoScenarios: options.operatorUI ? datedFeedbackScenarios() : undefined, guidedDemo: options.guidedDemo ?? false,
           batches: engine.store.batches(engine.organizationId, engine.repo.id), reviews: engine.store.reviews(engine.organizationId, engine.repo.id),
           complaints: engine.store.complaintCounts(engine.organizationId, engine.repo.id, new Date(Date.now() - 30 * 60_000).toISOString()),
           tasks: engine.store.list(engine.organizationId).filter(task => task.repositoryId === engine.repo.id).map(taskView) }); return;
+      }
+      if(req.method==='POST' && path==='/api/workflow/reset' && options.operatorUI && options.reset) {
+        if(req.headers.origin!==`http://${req.headers.host}`)throw new HttpError(403,'Same-origin request required.');
+        const {resetId}=z.object({resetId:z.string().uuid()}).strict().parse(await readJson(req,bodyTimeoutMs));
+        if(engine.maintenance)throw new DomainError('Demo reset is already running.');
+        void options.reset(resetId).catch(error=>console.error('Demo reset:',error.message));
+        json(res,202,{status:'pending',id:resetId});return;
       }
       if (req.method === 'POST' && path === '/api/workflow/start' && options.operatorUI) {
         if (req.headers.origin !== `http://${req.headers.host}`) throw new HttpError(403, 'Same-origin request required.');

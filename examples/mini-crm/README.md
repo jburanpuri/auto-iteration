@@ -1,13 +1,12 @@
-# Auto Iteration · Demo CRM
+# Northstar contacts
 
-A deliberately small, dependency-free customer directory. All customers are fictional.
+A small, dependency-free contacts application with fictional contact records.
+`product.html` shows contacts; `index.html` contains feedback. Both use `app.mjs` and `styles.css`. `export.mjs` serializes CSV files. Run checks with `node --test`.
 
-`index.html`, `styles.css`, and `app.mjs` implement the interface. `customers.mjs` owns data and filtering. `export.mjs` is the CSV exporter. Run tests with `node --test`. The parent Auto Iteration server serves this product and provides `/api/feedback` and `/api/tasks`; the product has no approval endpoint.
+Three independent demo defects:
 
-Known feedback scenarios:
+1. General: search for a name with no matches, wait for zero results, then Export contacts. `exportCsv` calls `Object.keys(rows[0])` on an empty array and throws. Expected: download a CSV containing the name and email headers.
+2. UI/UX: select Trial or Active. `renderContacts` reads the selected status but ignores it in the predicate. Expected: combine the status and search filters.
+3. Performance: type Ada in search. The input handler waits a fixed 2000 ms before filtering six records already in memory. Expected: prompt updates without the unnecessary wait, including when clearing search.
 
-- Engineering: exporting zero results throws because the exporter assumes a first row exists.
-- UI/UX: there is no single action to reset search and status together.
-- Performance: search updates are delayed 900 ms even with eight in-memory records, with uncancelled timers.
-
-Changes should stay scoped to the approved proposal and include relevant regression tests. No build step, network access, database, or dependency installation is needed.
+Each issue can be fixed independently. Scope changes and regression checks to the approved proposal. The parent server owns feedback, approval, and deployment; this product has no approval endpoint. Do not alter the parent application or reset mechanism.

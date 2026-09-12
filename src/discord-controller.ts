@@ -129,6 +129,7 @@ export class DiscordController {
     }
   }
   async sync() {
+    if(this.engine.maintenance)return;
     for (let task of this.tasks().reverse()) {
       if (task.slackThread || !['discussing', 'changes_ready', 'failed', 'declined'].includes(task.status)) continue;
       const destination = this.config.route?.(task) ?? this.config.channelId;

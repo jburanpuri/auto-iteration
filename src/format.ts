@@ -26,7 +26,7 @@ export function formatDiscordTask(task: Task, consoleUrl?: string): string {
   const plan = task.plans.at(-1);
   const title = brief(task.feedback.title, 160);
   const confidence = plan?.confidence;
-  const trust = confidence ? `• **Non-spam confidence:** ${confidence.legitimacy === 'sample' ? 'Sample data — authenticity not scored' : confidence.legitimacy}. ${brief(confidence.legitimacyReason, 140)}\n• **Issue confidence:** ${confidence.issue}. ${brief(confidence.issueReason, 170)}` : '• **Confidence:** Not assessed in this older proposal. Request a revised plan.';
+  const trust = confidence ? `• **Non-spam confidence:** ${confidence.legitimacy === 'sample' ? 'Not assessed. Request a revised content assessment.' : `${confidence.legitimacy}. ${brief(confidence.legitimacyReason, 140)}`}\n• **Issue confidence:** ${confidence.issue}. ${brief(confidence.issueReason, 170)}` : '• **Confidence:** Not assessed in this older proposal. Request a revised plan.';
   const detailLink = consoleUrl ? `\n\nFull details: ${consoleUrl}` : '';
   if (task.status === 'failed') return `**Needs attention**\n${title}\n\n${brief(task.error || 'The investigation could not finish.', 600)}${detailLink}`;
   if (task.publication?.status === 'published') return `**Fix is live**\n${title}\n\nRepository tests passed.\n${task.publication.url}`;

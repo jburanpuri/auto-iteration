@@ -1,3 +1,7 @@
+# Current hosted demo
+
+See [TEST_ROUTES.md](TEST_ROUTES.md) for the current 120-review workflow, three navbar pages, Discord confidence summaries, and approved Vercel releases. The notes below describe earlier local-only milestones.
+
 # Northstar feedback walkthrough
 
 The main demo uses one company feedback page. Run `npm run demo:live`, open `http://127.0.0.1:4318`, enter a name and any product feedback, and submit. A single real report triggers Codex classification and investigation. CSV export is an optional example, not an intake restriction.
@@ -128,6 +132,6 @@ Each completed investigation sends one concise message. Actionable fixes show th
 
 ## Start a prepared feedback batch
 
-Open the separate engineer console (port 4319 by default; the current running demo uses 4349). Six labeled sample feedback entries are visible before anything is submitted. Click **Start workflow** to queue three issues: empty contact export (General), feedback confirmation (UI/UX issue), and unnecessary background polling (Performance). Each issue includes two sample participants' reports. Codex investigates and summarizes each issue, then the bot sends its result to the selected team. Every implementation still needs that team's authorized approval.
+Open `/reviews/` on the hosted demo. It displays 120 labeled sample reviews and real submissions. The manual workflow uses Codex to group all unprocessed reports and investigate each issue; concise proposals route to the three selected teams. An authorized engineer must approve before implementation and publication.
 
 The public Northstar form starts with an empty name field and contains no batch/demo controls. Retrying the same batch request does not create extra tasks. Another deliberate click starts a fresh batch. The scripted provider only implements the CSV fixture; run live Codex to investigate all three examples.

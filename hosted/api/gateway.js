@@ -31,7 +31,7 @@ export default async function handler(req,res) {
       const state=await read('state/snapshot.json') || {tasks:[],reviews:[],batches:[],discord:false,mode:'codex',hosted:true,productUrl:'/product'};
       const now=new Date();const start=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
       const demoScenarios=scenarios.map((s,g)=>({...s,reviews:s.reviews.map((r,i)=>({...r,postedAt:new Date(now.getTime()-(now.getTime()-start)*(i*3+g)/120).toISOString()}))}));
-      return send(200,{...state,demoScenarios,canStart:authorized(req),workerOnline:!!state.workerAt && Date.now()-Date.parse(state.workerAt)<90000});
+      return send(200,{...state,reset:await read('state/reset.json'),demoScenarios,canStart:authorized(req),workerOnline:!!state.workerAt && Date.now()-Date.parse(state.workerAt)<90000});
     }
     if(req.method!=='POST')return send(404,{error:'Route not found.'});
     if(req.headers.origin!==`https://${req.headers.host}`)return send(403,{error:'Same-origin request required.'});
@@ -48,7 +48,12 @@ export default async function handler(req,res) {
       if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.externalId)||typeof body.reviewer!=='string'||!body.reviewer.trim()||body.reviewer.length>80||typeof body.text!=='string'||!body.text.trim()||body.text.length>11000||!['general','ui_ux','performance'].includes(body.category))return send(400,{error:'Enter your name, category, and feedback.'});
       const feedback={externalId:body.externalId,source:'vercel-feedback',category:body.category,title:`${body.reviewer.trim()}: ${body.text.trim().slice(0,100)}`,text:`Reported by ${body.reviewer.trim()} (self-reported name).\n${body.text.trim()}`};
       await create(`inbox/feedback/${body.externalId}.json`,feedback);
-      return send(202,{status:'backlog',message:'Feedback saved for the next summary.'});
+      return send(202,{status:'queued',message:'Feedback saved. Code investigation is queued.'});
+    }
+    if(path==='/api/workflow/reset') {
+      if(!authorized(req))return send(401,{error:'Enter the demo access code to reset.'});
+      if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(body.resetId))return send(400,{error:'Invalid reset ID.'});
+      await create(`inbox/reset/${body.resetId}.json`,{resetId:body.resetId});return send(202,{status:'pending',id:body.resetId});
     }
     if(path==='/api/workflow/start') {
       if(!authorized(req))return send(401,{error:'Enter the demo access code to start workflows.'});

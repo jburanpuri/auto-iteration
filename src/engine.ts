@@ -8,19 +8,26 @@ import type { ConversationProvider } from './conversation.js';
 import { baseCommit, collectChanges, isolatedCheckout } from './git.js';
 
 export class Engine {
+  maintenance = false;
+  activeDiscussions = 0;
+  resetState?: import('./reset-demo.js').ResetState;
+  private available() { if(this.maintenance)throw new DomainError('Demo reset in progress. Please wait.'); }
   publish?: (task: Task) => Promise<string>;
   constructor(readonly store: Store, readonly organizationId: string, readonly repo: Repository,
     readonly provider: EngineeringProvider, readonly root: string,
     private clock: () => Date = () => new Date(), readonly conversation?: ConversationProvider) {}
   private at() { return this.clock().toISOString(); }
   private authorize(actor: Actor) {
+    this.available();
     if (actor.organizationId !== this.organizationId) throw new DomainError('Actor belongs to another organization.');
   }
   submit(input: unknown) {
+    this.available();
     const feedback = inputSchema.parse(input);
     return this.store.create(this.newTask(feedback));
   }
   demoReview(input: unknown, issue: Issue = 'other', sample = false, launchSample = false, groupKey?: string) {
+    this.available();
     const feedback = inputSchema.parse(input);
     // Only labeled fixtures use a scripted spam rule. Real reports are classified
     // by the agent, including reports ABOUT spam that merely quote those phrases.
@@ -36,6 +43,7 @@ export class Engine {
       signal: { issue, reportCount: reports.length, windowMinutes: 30, reportIds: reports.map(report => report.id) } }));
   }
   collect(input: unknown, sample = false) {
+    this.available();
     const feedback = inputSchema.parse(input);
     return this.store.collectReview(this.organizationId, this.repo.id, { id: randomUUID(), feedback, issue: 'other',
       at: this.at(), sample, disposition: sample ? 'sample' : 'backlog', reason: 'Saved. Waiting for the next manual summary.' });
@@ -61,6 +69,7 @@ export class Engine {
     return task;
   }
   report(input: unknown, issue: Issue) {
+    this.available();
     const feedback = inputSchema.parse(input);
     return this.store.escalate(this.organizationId, this.repo.id, feedback, issue, this.at(),
       (feedback, signal) => ({ ...this.newTask(feedback), signal }));
@@ -70,6 +79,10 @@ export class Engine {
     return { signal: task.signal ?? null, reports: this.store.reviews(this.organizationId, this.repo.id).filter(r => task.signal?.reportIds.includes(r.id)), logs: task.signal && task.signal.issue !== 'other' ? logs.filter(log => log.issue === task.signal!.issue) : logs };
   }
   async answer(task: Task) {
+    this.available();this.activeDiscussions++;
+    try {return await this.answerInternal(task);}finally{this.activeDiscussions--;}
+  }
+  private async answerInternal(task: Task) {
     if (this.conversation) {
       const result = await this.conversation.answer(task, this.evidence(task));
       this.store.mutate(task.id, this.organizationId, { type: 'conversation.reply', actor: this.conversation.label, at: this.at() }, current => {
@@ -148,10 +161,12 @@ export class Engine {
   }
   pendingJobs() { return this.store.jobs(this.organizationId).filter(job => job.status === 'pending'); }
   async drain() {
+    if(this.maintenance)return;
     await this.summarizePending();
     for (const job of this.pendingJobs()) await this.runJob(job.id);
   }
   async runJob(id: string): Promise<Task | undefined> {
+    if(this.maintenance)return;
     const job = this.store.claimJob(id, this.organizationId);
     if (!job) return; // Another delivery or worker already claimed it.
     try {
@@ -165,9 +180,6 @@ export class Engine {
         const workspace = await isolatedCheckout(this.repo, snapshot, this.root, `investigate-${job.id}`);
         const evidence = this.evidence(task);
         const proposal = proposalSchema.parse(await this.provider.investigate(task, workspace, evidence));
-        if(proposal.confidence && evidence.reports.length && evidence.reports.every(r=>r.sample)) {
-          proposal.confidence.legitimacy = 'sample'; proposal.confidence.legitimacyReason = 'Authored demo reviews; no real-user authenticity claim.';
-        }
         if (await baseCommit(this.repo) !== commit) throw new DomainError('Repository base moved during investigation. Revise again.');
         this.store.mutate(task.id, this.organizationId, { type: 'proposal.prepared', actor: this.provider.label, at: this.at(), detail: JSON.stringify(this.provider.lastRun) }, task => {
           requireState(task, ['investigating']);

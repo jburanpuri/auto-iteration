@@ -1,5 +1,44 @@
 import { exportCsv } from './export.mjs';
 const $ = selector => document.querySelector(selector);
+const page = document.body.dataset.page || 'feedback';
+for(const item of document.querySelectorAll('[data-nav]')) { if(item.dataset.nav===page)item.setAttribute('aria-current','page');if(!['127.0.0.1','localhost'].includes(location.hostname)&&item.dataset.nav==='reviews')item.href='/reviews/'; }
+const contacts = [
+  { name: 'Ada Chen', email: 'ada@example.test', status: 'Active' },
+  { name: 'Marcus Rivera', email: 'marcus@example.test', status: 'Active' },
+  { name: 'Priya Shah', email: 'priya@example.test', status: 'Trial' },
+  { name: 'Oliver Park', email: 'oliver@example.test', status: 'Active' },
+  { name: 'Sofia Martin', email: 'sofia@example.test', status: 'Active' },
+  { name: 'James Wilson', email: 'james@example.test', status: 'Trial' },
+];
+let visibleContacts = contacts;
+function renderContacts() {
+  const query = $('#contact-search').value.trim().toLowerCase();
+  const status = $('#contact-status').value;
+  visibleContacts = contacts.filter(contact => `${contact.name} ${contact.email}`.toLowerCase().includes(query));
+  $('#contact-count').textContent = `${visibleContacts.length} contacts`;
+  const list = $('#contact-rows'); list.replaceChildren();
+  for (const contact of visibleContacts) {
+    const row = node('tr');
+    for (const value of [contact.name, contact.email, contact.status]) row.append(node('td', value));
+    list.append(row);
+  }
+  $('#contacts-empty').hidden = visibleContacts.length > 0;
+}
+if (page === 'product') {
+  renderContacts();
+  $('#contact-status').onchange = renderContacts;
+  let searchTimer;
+  $('#contact-search').oninput = () => {
+    $('#search-state').textContent = 'Searching…';
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { renderContacts(); $('#search-state').textContent = ''; }, 2000);
+  };
+}
+const feedbackQuery = new URLSearchParams(location.search);
+if (page === 'feedback' && feedbackQuery.has('message')) {
+  $('#feedback-text').value = feedbackQuery.get('message');
+  if (['general', 'ui_ux', 'performance'].includes(feedbackQuery.get('category'))) $('#feedback-category').value = feedbackQuery.get('category');
+}
 const preview = location.pathname.startsWith('/preview/');
 let pendingSubmission;
 let state;
@@ -16,7 +55,9 @@ function link(text, href, className) {
   const item = node('a', text, className); item.href = href; item.target = '_blank'; item.rel = 'noopener'; return item;
 }
 async function api(path, body) {
-  const response = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const options = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  let response = await fetch(path, options);
+  if(response.status === 401 && ['127.0.0.1','localhost'].includes(location.hostname)) { await fetch('/'); response = await fetch(path, options); }
   const data = await response.json(); if (!response.ok) throw new Error(data.error || 'Request failed.'); return data;
 }
 $('#preview-banner').hidden = !preview;
@@ -25,15 +66,15 @@ $('#use-example').onclick = () => { $('#feedback-text').value = example; $('#fee
 $('#export').onclick = async () => {
   const notice = $('#export-notice'); notice.hidden = false;
   try {
-    const csv = exportCsv([], ['name', 'email']);
-    notice.className = 'notice success'; notice.textContent = 'Your contact export is ready.';
-    notice.append(node('pre', csv || '(empty file)')); notice.lastChild.id = 'csv-output';
+    const rows = page === 'product' ? visibleContacts.map(({name, email}) => ({name, email})) : [];
+    const csv = exportCsv(rows, ['name', 'email']);
+    notice.className = 'notice success'; notice.textContent = 'Downloaded contacts.csv.';
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-    const download = link('Download CSV', url); download.download = 'contacts.csv'; notice.append(download);
+    const download = link('Download CSV', url); download.download = 'contacts.csv'; download.hidden = true; notice.append(download); download.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (error) {
     notice.className = 'notice error'; notice.textContent = 'We couldn’t create your export. Please try again or send us feedback.';
-    const report = node('button', 'Report this issue', 'text-button'); report.onclick = () => { $('#feedback-text').value = example; $('#feedback-text').focus(); }; notice.append(report);
+    const report = node('button', 'Report this issue', 'text-button'); report.onclick = () => { if (page === 'product') { location.href = `/feedback/?category=general&message=${encodeURIComponent(example)}`; } else { $('#feedback-text').value = example; $('#feedback-text').focus(); } }; notice.append(report);
     if (!preview) await api('/api/events', { id: crypto.randomUUID(), issue: 'csv_export', event: 'export_failed', rowCount: 0,
       message: error.message.slice(0, 1000), stack: error.stack?.slice(0, 3000) }).catch(() => {});
   }
